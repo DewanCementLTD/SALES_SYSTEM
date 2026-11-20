@@ -1,0 +1,2760 @@
+-- =====================================================================
+--  02_DCL_SALES_LOAD_DATA.sql  -  copies ALL rows of both legacy DBs into the new tables
+--
+--  BEFORE RUNNING
+--  1. Import the two legacy exports, unchanged, into archive schemas on the
+--     NEW server (these stay as the permanent, complete copy):
+--       imp system/<pwd>@NEWDB fromuser=SALES    touser=KHI_SALES file=khi_sales.dmp log=khi_imp.log
+--       imp system/<pwd>@NEWDB fromuser=SCLSALES touser=ISB_SALES file=isb_sales.dmp log=isb_imp.log
+--  2. Run this script as the owner of the new tables, after
+--       GRANT SELECT ANY TABLE TO <new_owner>;   -- or SELECT on each archive table
+--  3. Check the source BRNCH/COMPC values (query at the end of this file).
+--     BRNCH is set to 1 for every KHI row and 2 for every ISB row.
+--
+--  HOW NOTHING IS LOST
+--  * Each INSERT copies every column by name (same-meaning columns with two names
+--    go into one column, see the merged columns check at the end). NUMBER -> VARCHAR2 code columns
+--    use TO_CHAR, LONG RAW uses TO_LOB.
+--  * LOG ERRORS: a row that fails for ANY reason is written to its ERR$_
+--    table with the Oracle error - the load never stops and no row vanishes.
+--    After the load:  SELECT * FROM ERR$_<table>;  fix, and re-insert.
+--  * The reconciliation query at the end compares source vs target counts
+--    for every table. Expected result: every DIFF = 0.
+--  * ~5 GB: conventional inserts with a COMMIT per table. Run off-hours.
+--    Make sure the new tablespace has ~10 GB free (data + indexes).
+-- =====================================================================
+SET DEFINE ON
+SET ECHO ON
+SET TIMING ON
+SET SERVEROUTPUT ON
+WHENEVER SQLERROR CONTINUE
+DEFINE KHI_SCH = KHI_SALES
+DEFINE ISB_SCH = ISB_SALES
+
+-- ---------------------------------------------------------------- error log tables
+
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'UNIT_MST', err_log_table_name => 'ERR$_UNIT_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_TYPE', err_log_table_name => 'ERR$_CREDIT_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_NOTE_TYPE', err_log_table_name => 'ERR$_CREDIT_NOTE_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CATEGORY_TYPE', err_log_table_name => 'ERR$_CATEGORY_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CHANNEL_DESC', err_log_table_name => 'ERR$_CHANNEL_DESC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_GROUP', err_log_table_name => 'ERR$_CUSTOMER_GROUP', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SALES_TAX', err_log_table_name => 'ERR$_SALES_TAX', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SALES_TAX_FED', err_log_table_name => 'ERR$_SALES_TAX_FED', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CED_SETUP', err_log_table_name => 'ERR$_CED_SETUP', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'MODE_OF_TRANSPORT', err_log_table_name => 'ERR$_MODE_OF_TRANSPORT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BANK_DESC', err_log_table_name => 'ERR$_BANK_DESC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BAGS_COLOR', err_log_table_name => 'ERR$_BAGS_COLOR', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PROD_BRAND', err_log_table_name => 'ERR$_PROD_BRAND', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'GROUP_MST', err_log_table_name => 'ERR$_GROUP_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'GROUP_PRODUCT', err_log_table_name => 'ERR$_GROUP_PRODUCT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BLOCK_CUSTOMER_GROUP', err_log_table_name => 'ERR$_BLOCK_CUSTOMER_GROUP', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'EXCHANGE_RATE_MAST', err_log_table_name => 'ERR$_EXCHANGE_RATE_MAST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'EXCHANGE_RATE_DTL', err_log_table_name => 'ERR$_EXCHANGE_RATE_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SALES_YEAR', err_log_table_name => 'ERR$_SALES_YEAR', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'COMPANY', err_log_table_name => 'ERR$_COMPANY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DAYS_LOCK', err_log_table_name => 'ERR$_DAYS_LOCK', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BLOCK_DO_DATE', err_log_table_name => 'ERR$_BLOCK_DO_DATE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AGGING_GROUP', err_log_table_name => 'ERR$_AGGING_GROUP', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AGGING_RULE', err_log_table_name => 'ERR$_AGGING_RULE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ZONE_DESC', err_log_table_name => 'ERR$_ZONE_DESC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TERRITORY', err_log_table_name => 'ERR$_TERRITORY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AREA', err_log_table_name => 'ERR$_AREA', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'INSTRUMENT_TYPE', err_log_table_name => 'ERR$_INSTRUMENT_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'COMPANY_BANK', err_log_table_name => 'ERR$_COMPANY_BANK', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TRANSPORTER_DESC', err_log_table_name => 'ERR$_TRANSPORTER_DESC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRODUCT_TYPE', err_log_table_name => 'ERR$_PRODUCT_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRODUCT_DESC_T', err_log_table_name => 'ERR$_PRODUCT_DESC_T', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRODUCT_DESC_DTL', err_log_table_name => 'ERR$_PRODUCT_DESC_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BAG', err_log_table_name => 'ERR$_BAG', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DELIVERY_ORDER_TYPE', err_log_table_name => 'ERR$_DELIVERY_ORDER_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_MASTER', err_log_table_name => 'ERR$_CUSTOMER_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_INFO', err_log_table_name => 'ERR$_CUSTOMER_INFO', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_AREA', err_log_table_name => 'ERR$_CUSTOMER_AREA', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_BANK_ACC', err_log_table_name => 'ERR$_CUSTOMER_BANK_ACC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SECURITY_DEPOSIT', err_log_table_name => 'ERR$_SECURITY_DEPOSIT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CSECURITY_DEPOSIT', err_log_table_name => 'ERR$_CSECURITY_DEPOSIT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BLOCK_CUSTOMER', err_log_table_name => 'ERR$_BLOCK_CUSTOMER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_LIMITS', err_log_table_name => 'ERR$_CREDIT_LIMITS', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_LIMITS_F', err_log_table_name => 'ERR$_CREDIT_LIMITS_F', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_APP_MASTER', err_log_table_name => 'ERR$_CREDIT_APP_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_APP_DETAIL', err_log_table_name => 'ERR$_CREDIT_APP_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_CREDIT_APP', err_log_table_name => 'ERR$_CUSTOMER_CREDIT_APP', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_MONITOR', err_log_table_name => 'ERR$_CREDIT_MONITOR', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TRADE_PRICE', err_log_table_name => 'ERR$_TRADE_PRICE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'OC_PRICE_DTL', err_log_table_name => 'ERR$_OC_PRICE_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AREA_RATES_M', err_log_table_name => 'ERR$_AREA_RATES_M', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AREA_RATES_P', err_log_table_name => 'ERR$_AREA_RATES_P', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AREA_RATES_D', err_log_table_name => 'ERR$_AREA_RATES_D', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ZONE_CITY_FRIEGHT_M', err_log_table_name => 'ERR$_ZONE_CITY_FRIEGHT_M', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ZONE_CITY_FRIEGHT_D', err_log_table_name => 'ERR$_ZONE_CITY_FRIEGHT_D', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TARGET_MST', err_log_table_name => 'ERR$_TARGET_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TARGET_CUST', err_log_table_name => 'ERR$_TARGET_CUST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TARGET_CUST_AREA', err_log_table_name => 'ERR$_TARGET_CUST_AREA', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TARGET_DTL_CTY', err_log_table_name => 'ERR$_TARGET_DTL_CTY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TARGET_PERC_MST', err_log_table_name => 'ERR$_TARGET_PERC_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TARGET_PERC_DTL', err_log_table_name => 'ERR$_TARGET_PERC_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'INCENTIVE', err_log_table_name => 'ERR$_INCENTIVE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'INCENTIVE_PRODUCT', err_log_table_name => 'ERR$_INCENTIVE_PRODUCT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'INCENTIVE_DETAIL', err_log_table_name => 'ERR$_INCENTIVE_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SALES_REQUEST_MASTER', err_log_table_name => 'ERR$_SALES_REQUEST_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SALES_REQUEST_DETAIL', err_log_table_name => 'ERR$_SALES_REQUEST_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ORDER_CONFIRM', err_log_table_name => 'ERR$_ORDER_CONFIRM', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ORDER_CONFIRM_DETAIL', err_log_table_name => 'ERR$_ORDER_CONFIRM_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CASH_CHEQUE_RECEIPTS', err_log_table_name => 'ERR$_CASH_CHEQUE_RECEIPTS', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ORDER_CONFIRM_BRV', err_log_table_name => 'ERR$_ORDER_CONFIRM_BRV', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BRV_DTL', err_log_table_name => 'ERR$_BRV_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BANK_DEPOSIT', err_log_table_name => 'ERR$_BANK_DEPOSIT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BANK_DEPOSIT1', err_log_table_name => 'ERR$_BANK_DEPOSIT1', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PERMIT_MST_CITY', err_log_table_name => 'ERR$_PERMIT_MST_CITY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PERMIT_DTL_CITY', err_log_table_name => 'ERR$_PERMIT_DTL_CITY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PERMIT_ADJ_CITY', err_log_table_name => 'ERR$_PERMIT_ADJ_CITY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DELIVERY_ORDER', err_log_table_name => 'ERR$_DELIVERY_ORDER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DO_ADJUSTMENT', err_log_table_name => 'ERR$_DO_ADJUSTMENT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'FH_DELIVERY_CHALLAN', err_log_table_name => 'ERR$_FH_DELIVERY_CHALLAN', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DELIVERY_CHALLAN_OLD', err_log_table_name => 'ERR$_DELIVERY_CHALLAN_OLD', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'FH_DEL_CHALLAN_DETAIL', err_log_table_name => 'ERR$_FH_DEL_CHALLAN_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DEL_CHALLAN_DETAIL_OLD', err_log_table_name => 'ERR$_DEL_CHALLAN_DETAIL_OLD', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'FH_DELIVERY_MEMO', err_log_table_name => 'ERR$_FH_DELIVERY_MEMO', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DELIVERY_MEMO_OLD', err_log_table_name => 'ERR$_DELIVERY_MEMO_OLD', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'FH_DC_DOCUMENT', err_log_table_name => 'ERR$_FH_DC_DOCUMENT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_NOTE', err_log_table_name => 'ERR$_CREDIT_NOTE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_NOTE_DETAIL', err_log_table_name => 'ERR$_CREDIT_NOTE_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ORDER_CANCEL_MASTER', err_log_table_name => 'ERR$_ORDER_CANCEL_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ORDER_CANCEL_DETAIL', err_log_table_name => 'ERR$_ORDER_CANCEL_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SD_OCA_MST', err_log_table_name => 'ERR$_SD_OCA_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SD_OCA_DTL', err_log_table_name => 'ERR$_SD_OCA_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RECEIPT_CANCEL_MASTER', err_log_table_name => 'ERR$_RECEIPT_CANCEL_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RECEIPT_CANCEL_DETAIL', err_log_table_name => 'ERR$_RECEIPT_CANCEL_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BRV_CANCEL_DTL', err_log_table_name => 'ERR$_BRV_CANCEL_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'OPENING_BALANCES', err_log_table_name => 'ERR$_OPENING_BALANCES', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMER_OPEN_BALANCE', err_log_table_name => 'ERR$_CUSTOMER_OPEN_BALANCE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_ADJ_1', err_log_table_name => 'ERR$_DC_ADJ_1', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_ADJ_2', err_log_table_name => 'ERR$_DC_ADJ_2', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_LADGER_ADJ', err_log_table_name => 'ERR$_DC_LADGER_ADJ', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TAX', err_log_table_name => 'ERR$_TAX', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TAX_DETAIL', err_log_table_name => 'ERR$_TAX_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TAX_CERTIFICATE', err_log_table_name => 'ERR$_TAX_CERTIFICATE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TAX_CERTIFICATE_DTL', err_log_table_name => 'ERR$_TAX_CERTIFICATE_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'VOCH_POST', err_log_table_name => 'ERR$_VOCH_POST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'VOCH_DTL', err_log_table_name => 'ERR$_VOCH_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_USERNAME', err_log_table_name => 'ERR$_SEC_USERNAME', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_USERCMPN', err_log_table_name => 'ERR$_SEC_USERCMPN', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_MODULE_S', err_log_table_name => 'ERR$_SEC_MODULE_S', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_MAINMENU', err_log_table_name => 'ERR$_SEC_MAINMENU', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_USERPERM', err_log_table_name => 'ERR$_SEC_USERPERM', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_USERMENU', err_log_table_name => 'ERR$_SEC_USERMENU', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_USER_FAV', err_log_table_name => 'ERR$_SEC_USER_FAV', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_LHISTORY', err_log_table_name => 'ERR$_SEC_LHISTORY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'SEC_MOD_ACES', err_log_table_name => 'ERR$_SEC_MOD_ACES', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'U_AUDIT', err_log_table_name => 'ERR$_U_AUDIT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'LOG_CUSTOMER_INFO', err_log_table_name => 'ERR$_LOG_CUSTOMER_INFO', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'LOG_CUSTOMER_CREDIT_APP', err_log_table_name => 'ERR$_LOG_CUSTOMER_CREDIT_APP', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RATE_UPDATE_HISTORY', err_log_table_name => 'ERR$_RATE_UPDATE_HISTORY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PERMIT_MST', err_log_table_name => 'ERR$_PERMIT_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PERMIT_DTL', err_log_table_name => 'ERR$_PERMIT_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_AKNOW', err_log_table_name => 'ERR$_DC_AKNOW', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_AKNOW_DET', err_log_table_name => 'ERR$_DC_AKNOW_DET', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'TSECURITY_DEPOSIT', err_log_table_name => 'ERR$_TSECURITY_DEPOSIT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'GODOWN_DO', err_log_table_name => 'ERR$_GODOWN_DO', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'GODOWN_DO_DTL', err_log_table_name => 'ERR$_GODOWN_DO_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ACK_MST', err_log_table_name => 'ERR$_ACK_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_COUPON', err_log_table_name => 'ERR$_DC_COUPON', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RETAILER_INFO', err_log_table_name => 'ERR$_RETAILER_INFO', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RET_PAY_MAS', err_log_table_name => 'ERR$_RET_PAY_MAS', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RET_PAY_DET', err_log_table_name => 'ERR$_RET_PAY_DET', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'D_CATEGORY', err_log_table_name => 'ERR$_D_CATEGORY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'D_DEALER_MASTER', err_log_table_name => 'ERR$_D_DEALER_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'D_RETAILER_MASTER', err_log_table_name => 'ERR$_D_RETAILER_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'D_INSENTIVE_MASTER', err_log_table_name => 'ERR$_D_INSENTIVE_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DISCOUNT_TYPE', err_log_table_name => 'ERR$_DISCOUNT_TYPE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DISCOUNT2', err_log_table_name => 'ERR$_DISCOUNT2', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DISCOUNT_APP_MASTER', err_log_table_name => 'ERR$_DISCOUNT_APP_MASTER', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DISCOUNT_APP_DETAIL', err_log_table_name => 'ERR$_DISCOUNT_APP_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRICE_OPENING', err_log_table_name => 'ERR$_PRICE_OPENING', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRICE_SLAB_PERIOD', err_log_table_name => 'ERR$_PRICE_SLAB_PERIOD', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRICE_SLAB', err_log_table_name => 'ERR$_PRICE_SLAB', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'PRICE_SLAB_OC', err_log_table_name => 'ERR$_PRICE_SLAB_OC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DUMMY_INV_MST', err_log_table_name => 'ERR$_DUMMY_INV_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DUMMY_INV_DTL', err_log_table_name => 'ERR$_DUMMY_INV_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DISTRICT_DTL', err_log_table_name => 'ERR$_DISTRICT_DTL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'APCAMA_QUOTA', err_log_table_name => 'ERR$_APCAMA_QUOTA', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'MARKETING', err_log_table_name => 'ERR$_MARKETING', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'REG_DESC', err_log_table_name => 'ERR$_REG_DESC', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RESPONSIBLE_PERSON', err_log_table_name => 'ERR$_RESPONSIBLE_PERSON', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'BLOCK_ADV_DEBTS', err_log_table_name => 'ERR$_BLOCK_ADV_DEBTS', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'MASTER_AREA', err_log_table_name => 'ERR$_MASTER_AREA', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DISTRICT', err_log_table_name => 'ERR$_DISTRICT', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CITY', err_log_table_name => 'ERR$_CITY', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'AREA_RATES_DIST', err_log_table_name => 'ERR$_AREA_RATES_DIST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'ORDER_CANCELLATION', err_log_table_name => 'ERR$_ORDER_CANCELLATION', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'RECEIPT_CANCEL', err_log_table_name => 'ERR$_RECEIPT_CANCEL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_APP_MASTER1', err_log_table_name => 'ERR$_CREDIT_APP_MASTER1', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CREDIT_APP_DETAIL1', err_log_table_name => 'ERR$_CREDIT_APP_DETAIL1', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DEBIT_CREDIT_NOTE', err_log_table_name => 'ERR$_DEBIT_CREDIT_NOTE', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'DC_ADJ_3', err_log_table_name => 'ERR$_DC_ADJ_3', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'REGION', err_log_table_name => 'ERR$_REGION', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'REGION_DETAIL', err_log_table_name => 'ERR$_REGION_DETAIL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'NEW_REGION', err_log_table_name => 'ERR$_NEW_REGION', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'REGION_PRICE_LIST', err_log_table_name => 'ERR$_REGION_PRICE_LIST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUSTOMERS_DCL', err_log_table_name => 'ERR$_CUSTOMERS_DCL', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUST_GRP_MST', err_log_table_name => 'ERR$_CUST_GRP_MST', skip_unsupported => TRUE);
+EXEC DBMS_ERRLOG.CREATE_ERROR_LOG(dml_table_name => 'CUST_GRP_DTL', err_log_table_name => 'ERR$_CUST_GRP_DTL', skip_unsupported => TRUE);
+
+-- ---------------------------------------------------------------- data
+
+PROMPT UNIT_MST <- KHI.UNIT_MST
+INSERT INTO UNIT_MST
+  (UNIT_ID, UNIT_NAME, GRP_ID, GRP_NM, UNIT, SALES_ABRV, UNIT_GRP, COMPC, BRNCH)
+SELECT s.UNIT_ID, s.UNIT_NAME, s.GRP_ID, s.GRP_NM, s.UNIT, s.SALES_ABRV, s.UNIT_GRP, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..UNIT_MST s
+  LOG ERRORS INTO ERR$_UNIT_MST ('KHI.UNIT_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT UNIT_MST <- ISB.UNIT_MST
+INSERT INTO UNIT_MST
+  (UNIT_ID, UNIT_NAME, GRP_ID, GRP_NM, UNIT, SALES_ABRV, UNIT_GRP, COMPC, BRNCH)
+SELECT s.UNIT_ID, s.UNIT_NAME, s.GRP_ID, s.GRP_NM, s.UNIT, s.SALES_ABRV, s.UNIT_GRP, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..UNIT_MST s
+  LOG ERRORS INTO ERR$_UNIT_MST ('ISB.UNIT_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_TYPE <- KHI.CREDIT_TYPE
+INSERT INTO CREDIT_TYPE
+  (CREDIT_CODE, CREDIT_DESC, TYPE, COMPC, BRNCH)
+SELECT s.CREDIT_CODE, s.CREDIT_DESC, s.TYPE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_TYPE s
+  LOG ERRORS INTO ERR$_CREDIT_TYPE ('KHI.CREDIT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_TYPE <- ISB.CREDIT_TYPE
+INSERT INTO CREDIT_TYPE
+  (CREDIT_CODE, CREDIT_DESC, TYPE, COMPC, BRNCH)
+SELECT s.CREDIT_CODE, s.CREDIT_DESC, s.TYPE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_TYPE s
+  LOG ERRORS INTO ERR$_CREDIT_TYPE ('ISB.CREDIT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_NOTE_TYPE <- KHI.CREDIT_NOTE_TYPE
+INSERT INTO CREDIT_NOTE_TYPE
+  (CODE, DESCRIPTION, COMPC, BRNCH)
+SELECT s.CODE, s.DESCRIPTION, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_NOTE_TYPE s
+  LOG ERRORS INTO ERR$_CREDIT_NOTE_TYPE ('KHI.CREDIT_NOTE_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_NOTE_TYPE <- ISB.CREDIT_NOTE_TYPE
+INSERT INTO CREDIT_NOTE_TYPE
+  (CODE, DESCRIPTION, COMPC, BRNCH)
+SELECT s.CODE, s.DESCRIPTION, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_NOTE_TYPE s
+  LOG ERRORS INTO ERR$_CREDIT_NOTE_TYPE ('ISB.CREDIT_NOTE_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CATEGORY_TYPE <- KHI.CATEGORY_TYPE
+INSERT INTO CATEGORY_TYPE
+  (CAT_CODE, CAT_DESC, COMPC, BRNCH)
+SELECT s.CAT_CODE, s.CAT_DESC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CATEGORY_TYPE s
+  LOG ERRORS INTO ERR$_CATEGORY_TYPE ('KHI.CATEGORY_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CATEGORY_TYPE <- ISB.CATEGORY_TYPE
+INSERT INTO CATEGORY_TYPE
+  (CAT_CODE, CAT_DESC, COMPC, BRNCH)
+SELECT s.CAT_CODE, s.CAT_DESC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CATEGORY_TYPE s
+  LOG ERRORS INTO ERR$_CATEGORY_TYPE ('ISB.CATEGORY_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CHANNEL_DESC <- KHI.CHANNEL_DESC
+INSERT INTO CHANNEL_DESC
+  (CHANNEL_CODE, CHANNEL_DESC, SORT_BY, GRP, COMPC, BRNCH)
+SELECT s.CHANNEL_CODE, s.CHANNEL_DESC, s.SORT_BY, s.GRP, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CHANNEL_DESC s
+  LOG ERRORS INTO ERR$_CHANNEL_DESC ('KHI.CHANNEL_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CHANNEL_DESC <- ISB.CHANNEL_DESC
+INSERT INTO CHANNEL_DESC
+  (CHANNEL_CODE, CHANNEL_DESC, SORT_BY, GRP, COMPC, BRNCH)
+SELECT s.CHANNEL_CODE, s.CHANNEL_DESC, s.SORT_BY, s.GRP, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CHANNEL_DESC s
+  LOG ERRORS INTO ERR$_CHANNEL_DESC ('ISB.CHANNEL_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_GROUP <- KHI.CUSTOMER_GROUP
+INSERT INTO CUSTOMER_GROUP
+  (GROUP_ID, GROUP_DESC, ADV_GROUP_DESC, COMPC, BRNCH)
+SELECT s.GROUP_ID, s.GROUP_DESC, s.ADV_GROUP_DESC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_GROUP s
+  LOG ERRORS INTO ERR$_CUSTOMER_GROUP ('KHI.CUSTOMER_GROUP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_GROUP <- ISB.CUSTOMER_GROUP
+INSERT INTO CUSTOMER_GROUP
+  (GROUP_ID, GROUP_DESC, ADV_GROUP_DESC, COMPC, BRNCH)
+SELECT s.GROUP_ID, s.GROUP_DESC, s.ADV_GROUP_DESC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CUSTOMER_GROUP s
+  LOG ERRORS INTO ERR$_CUSTOMER_GROUP ('ISB.CUSTOMER_GROUP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_TAX <- KHI.SALES_TAX
+INSERT INTO SALES_TAX
+  (SALES_TAX_TYPE, DESCRIPTIONS, PERCENT, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.SALES_TAX_TYPE, s.DESCRIPTIONS, s.PERCENT, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SALES_TAX s
+  LOG ERRORS INTO ERR$_SALES_TAX ('KHI.SALES_TAX') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_TAX <- ISB.SALES_TAX
+INSERT INTO SALES_TAX
+  (SALES_TAX_TYPE, DESCRIPTIONS, PERCENT, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.SALES_TAX_TYPE, s.DESCRIPTIONS, s.PERCENT, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SALES_TAX s
+  LOG ERRORS INTO ERR$_SALES_TAX ('ISB.SALES_TAX') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_TAX_FED <- KHI.SALES_TAX_FED
+INSERT INTO SALES_TAX_FED
+  (WDATE, STAX, STAX1, FED, COMPC, BRNCH)
+SELECT s.WDATE, s.STAX, s.STAX1, s.FED, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SALES_TAX_FED s
+  LOG ERRORS INTO ERR$_SALES_TAX_FED ('KHI.SALES_TAX_FED') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CED_SETUP <- KHI.CED_SETUP
+INSERT INTO CED_SETUP
+  (S_NO, FROM_DATE, TO_DATE, CED_PERCENTAGE, REMS, COMPC, BRNCH)
+SELECT s.S_NO, s.FROM_DATE, s.TO_DATE, s.CED_PERCENTAGE, s.REMS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CED_SETUP s
+  LOG ERRORS INTO ERR$_CED_SETUP ('KHI.CED_SETUP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT MODE_OF_TRANSPORT <- KHI.MODE_OF_TRANSPORT
+INSERT INTO MODE_OF_TRANSPORT
+  (MODE_CODE, MODE_NAME, COMPC, BRNCH)
+SELECT s.MODE_CODE, s.MODE_NAME, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..MODE_OF_TRANSPORT s
+  LOG ERRORS INTO ERR$_MODE_OF_TRANSPORT ('KHI.MODE_OF_TRANSPORT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT MODE_OF_TRANSPORT <- ISB.MODE_OF_TRANSPORT
+INSERT INTO MODE_OF_TRANSPORT
+  (MODE_CODE, MODE_NAME, COMPC, BRNCH)
+SELECT s.MODE_CODE, s.MODE_NAME, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..MODE_OF_TRANSPORT s
+  LOG ERRORS INTO ERR$_MODE_OF_TRANSPORT ('ISB.MODE_OF_TRANSPORT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BANK_DESC <- KHI.BANK_DESC
+INSERT INTO BANK_DESC
+  (BANK_CODE, BANK_NAME, BANK_TYPE, ACC_ID, COMPC, BRNCH)
+SELECT s.BANK_CODE, s.BANK_NAME, s.BANK_TYPE, s.ACC_ID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BANK_DESC s
+  LOG ERRORS INTO ERR$_BANK_DESC ('KHI.BANK_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BANK_DESC <- ISB.BANK_DESC
+INSERT INTO BANK_DESC
+  (BANK_CODE, BANK_NAME, BANK_TYPE, ACC_ID, COMPC, BRNCH)
+SELECT s.BANK_CODE, s.BANK_NAME, s.BANK_TYPE, s.ACC_ID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..BANK_DESC s
+  LOG ERRORS INTO ERR$_BANK_DESC ('ISB.BANK_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BAGS_COLOR <- KHI.BAGS_COLOR
+INSERT INTO BAGS_COLOR
+  (COLOR, DESCR, COMPC, BRNCH)
+SELECT s.COLOR, s.DESCR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BAGS_COLOR s
+  LOG ERRORS INTO ERR$_BAGS_COLOR ('KHI.BAGS_COLOR') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PROD_BRAND <- KHI.PROD_BRAND
+INSERT INTO PROD_BRAND
+  (BRAND, DESCR, STATS, COMPC, BRNCH)
+SELECT s.BRAND, s.DESCR, s.STATS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PROD_BRAND s
+  LOG ERRORS INTO ERR$_PROD_BRAND ('KHI.PROD_BRAND') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT GROUP_MST <- KHI.GROUP_MST
+INSERT INTO GROUP_MST
+  (GRP_ID, NAME, ORD_BY, COMPC, BRNCH)
+SELECT s.GRP_ID, s.NAME, s.ORD_BY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..GROUP_MST s
+  LOG ERRORS INTO ERR$_GROUP_MST ('KHI.GROUP_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT GROUP_PRODUCT <- KHI.GROUP_PRODUCT
+INSERT INTO GROUP_PRODUCT
+  (GROUP_PRODUCT_ID, GROUP_PRODUCT_CODE, GROUP_PRODUCT_NAME, GROUP_PRODUCT_ORDER, COMPC, BRNCH)
+SELECT s.GROUP_PRODUCT_ID, s.GROUP_PRODUCT_CODE, s.GROUP_PRODUCT_NAME, s.GROUP_PRODUCT_ORDER, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..GROUP_PRODUCT s
+  LOG ERRORS INTO ERR$_GROUP_PRODUCT ('KHI.GROUP_PRODUCT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BLOCK_CUSTOMER_GROUP <- KHI.BLOCK_CUSTOMER_GROUP
+INSERT INTO BLOCK_CUSTOMER_GROUP
+  (G_CODE, G_NAME, SORT, COMPC, BRNCH)
+SELECT s.G_CODE, s.G_NAME, s.SORT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BLOCK_CUSTOMER_GROUP s
+  LOG ERRORS INTO ERR$_BLOCK_CUSTOMER_GROUP ('KHI.BLOCK_CUSTOMER_GROUP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT EXCHANGE_RATE_MAST <- KHI.EXCHANGE_RATE_MAST
+INSERT INTO EXCHANGE_RATE_MAST
+  (SERNO, PRODUCT_TYPE, DOLLAR_RATE, EXC_RATE, EFCT_DATE, COMPC, BRNCH)
+SELECT s.SERNO, s.PRODUCT_TYPE, s.DOLLAR_RATE, s.EXC_RATE, s.EFCT_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..EXCHANGE_RATE_MAST s
+  LOG ERRORS INTO ERR$_EXCHANGE_RATE_MAST ('KHI.EXCHANGE_RATE_MAST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT EXCHANGE_RATE_DTL <- KHI.EXCHANGE_RATE_DTL
+INSERT INTO EXCHANGE_RATE_DTL
+  (SERNO, PRODUCT_CODE, AVG_RAT, PRODUCT_TYPE, DOLLAR_RATE, EXC_RATE, EFCT_DATE, STATUS, COMPC, BRNCH)
+SELECT s.SERNO, s.PRODUCT_CODE, s.AVG_RAT, s.PRODUCT_TYPE, s.DOLLAR_RATE, s.EXC_RATE, s.EFCT_DATE, s.STATUS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..EXCHANGE_RATE_DTL s
+  LOG ERRORS INTO ERR$_EXCHANGE_RATE_DTL ('KHI.EXCHANGE_RATE_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_YEAR <- KHI.SALES_YEAR
+INSERT INTO SALES_YEAR
+  (YEAR, YSTART, YEND, CLOSE, CLOSE_DATE, R, U, C, E, DESCR, COMPC, BRNCH)
+SELECT s.YEAR, s.YSTART, s.YEND, s.CLOSE, s.CLOSE_DATE, s.R, s.U, s.C, s.E, s.DESCR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SALES_YEAR s
+  LOG ERRORS INTO ERR$_SALES_YEAR ('KHI.SALES_YEAR') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_YEAR <- ISB.SALES_YEAR
+INSERT INTO SALES_YEAR
+  (YEAR, YSTART, YEND, CLOSE, CLOSE_DATE, R, U, C, E, DESCR, COMPC, BRNCH)
+SELECT s.YEAR, s.YSTART, s.YEND, s.CLOSE, s.CLOSE_DATE, s.R, s.U, s.C, s.E, s.DESCR, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SALES_YEAR s
+  LOG ERRORS INTO ERR$_SALES_YEAR ('ISB.SALES_YEAR') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT COMPANY <- KHI.COMPANY
+INSERT INTO COMPANY
+  (COMP_CODE, COMP_NAME, INCOME_TAX, EXCISE_DUTY, SYSTEM_PATH, LOGO_PATH, OTHER_EXPENSE, YSTART, YEND, CURRENT_YEAR, TRADE_DISC_LMT, ADDRESS, EXECUTE_PATH, SERVER_PATH_FORM, SERVER_PATH_REPORT, CREDIT_MONITOR, COMPC, BRNCH)
+SELECT s.COMP_CODE, s.COMP_NAME, s.INCOME_TAX, s.EXCISE_DUTY, s.SYSTEM_PATH, s.LOGO_PATH, s.OTHER_EXPENSE, s.YSTART, s.YEND, s.CURRENT_YEAR, s.TRADE_DISC_LMT, s.ADDRESS, s.EXECUTE_PATH, s.SERVER_PATH_FORM, s.SERVER_PATH_REPORT, s.CREDIT_MONITOR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..COMPANY s
+  LOG ERRORS INTO ERR$_COMPANY ('KHI.COMPANY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT COMPANY <- ISB.COMPANY
+INSERT INTO COMPANY
+  (COMP_CODE, COMP_NAME, INCOME_TAX, EXCISE_DUTY, SYSTEM_PATH, LOGO_PATH, OTHER_EXPENSE, YSTART, YEND, CURRENT_YEAR, TRADE_DISC_LMT, ADDRESS, EXECUTE_PATH, SERVER_PATH_FORM, SERVER_PATH_REPORT, CREDIT_MONITOR, COMPC, BRNCH)
+SELECT s.COMP_CODE, s.COMP_NAME, s.INCOME_TAX, s.EXCISE_DUTY, s.SYSTEM_PATH, s.LOGO_PATH, s.OTHER_EXPENSE, s.YSTART, s.YEND, s.CURRENT_YEAR, s.TRADE_DISC_LMT, s.ADDRESS, s.EXECUTE_PATH, s.SERVER_PATH_FORM, s.SERVER_PATH_REPORT, s.CREDIT_MONITOR, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..COMPANY s
+  LOG ERRORS INTO ERR$_COMPANY ('ISB.COMPANY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DAYS_LOCK <- KHI.DAYS_LOCK
+INSERT INTO DAYS_LOCK
+  (DY, COMPC, BRNCH)
+SELECT s.DY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DAYS_LOCK s
+  LOG ERRORS INTO ERR$_DAYS_LOCK ('KHI.DAYS_LOCK') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BLOCK_DO_DATE <- KHI.BLOCK_DO_DATE
+INSERT INTO BLOCK_DO_DATE
+  (FROM_DATE, TO_DAE, COMPC, BRNCH)
+SELECT s.FROM_DATE, s.TO_DAE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BLOCK_DO_DATE s
+  LOG ERRORS INTO ERR$_BLOCK_DO_DATE ('KHI.BLOCK_DO_DATE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AGGING_GROUP <- KHI.AGGING_GROUP
+INSERT INTO AGGING_GROUP
+  (UNIT_FROM, UNIT_TO, SALE_TYPE, DATE_FROM, DATE_TO, COMPC, BRNCH)
+SELECT s.UNIT_FROM, s.UNIT_TO, s.SALE_TYPE, s.DATE_FROM, s.DATE_TO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AGGING_GROUP s
+  LOG ERRORS INTO ERR$_AGGING_GROUP ('KHI.AGGING_GROUP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AGGING_RULE <- KHI.AGGING_RULE
+INSERT INTO AGGING_RULE
+  (SNO, F_DAY, T_DAY, F_DATE, T_DAATE, NO_OF_DAYS, FLAG, COMPC, BRNCH)
+SELECT s.SNO, s.F_DAY, s.T_DAY, s.F_DATE, s.T_DAATE, s.NO_OF_DAYS, s.FLAG, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AGGING_RULE s
+  LOG ERRORS INTO ERR$_AGGING_RULE ('KHI.AGGING_RULE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ZONE_DESC <- KHI.ZONE_DESC
+INSERT INTO ZONE_DESC
+  (ZONE_CODE, ZONE_NAME, COMPC, BRNCH)
+SELECT s.ZONE_CODE, s.ZONE_NAME, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ZONE_DESC s
+  LOG ERRORS INTO ERR$_ZONE_DESC ('KHI.ZONE_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ZONE_DESC <- ISB.ZONE_DESC
+INSERT INTO ZONE_DESC
+  (ZONE_CODE, ZONE_NAME, COMPC, BRNCH)
+SELECT s.ZONE_CODE, s.ZONE_NAME, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ZONE_DESC s
+  LOG ERRORS INTO ERR$_ZONE_DESC ('ISB.ZONE_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TERRITORY <- ISB.TERRITORY
+INSERT INTO TERRITORY
+  (TERRITORY_CODE, ZONE_CODE, TERRITORY_DESC, COMPC, BRNCH)
+SELECT s.TERRITORY_CODE, s.ZONE_CODE, s.TERRITORY_DESC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TERRITORY s
+  LOG ERRORS INTO ERR$_TERRITORY ('ISB.TERRITORY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA <- KHI.AREA
+INSERT INTO AREA
+  (AREA_CD, AREA_NAME, M_AREA_CD, ZONE_CODE, TERRITORY_CODE, AREA_DOC, COMPC, BRNCH)
+SELECT NVL(s.AREA_CD, s.AREA_CODE), NVL(s.AREA_NAME, s.AREA_DESC), s.M_AREA_CD, s.ZONE_CODE, s.TERRITORY_CODE, s.AREA_DOC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AREA s
+  LOG ERRORS INTO ERR$_AREA ('KHI.AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA <- ISB.AREA
+INSERT INTO AREA
+  (AREA_CD, AREA_NAME, M_AREA_CD, ZONE_CODE, TERRITORY_CODE, AREA_DOC, COMPC, BRNCH)
+SELECT NVL(s.AREA_CODE, s.AREA_CD), NVL(s.AREA_DESC, s.AREA_NAME), s.M_AREA_CD, s.ZONE_CODE, s.TERRITORY_CODE, s.AREA_DOC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..AREA s
+  LOG ERRORS INTO ERR$_AREA ('ISB.AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INSTRUMENT_TYPE <- KHI.INSTRUMENT_TYPE
+INSERT INTO INSTRUMENT_TYPE
+  (INST_CODE, INST_DESC, COMPC, BRNCH)
+SELECT s.INST_CODE, s.INST_DESC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..INSTRUMENT_TYPE s
+  LOG ERRORS INTO ERR$_INSTRUMENT_TYPE ('KHI.INSTRUMENT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INSTRUMENT_TYPE <- ISB.INSTRUMENT_TYPE
+INSERT INTO INSTRUMENT_TYPE
+  (INST_CODE, INST_DESC, COMPC, BRNCH)
+SELECT s.INST_CODE, s.INST_DESC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..INSTRUMENT_TYPE s
+  LOG ERRORS INTO ERR$_INSTRUMENT_TYPE ('ISB.INSTRUMENT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT COMPANY_BANK <- KHI.COMPANY_BANK
+INSERT INTO COMPANY_BANK
+  (BANK_CODE, BANK_DESC, ACCOUNT, BRANCH_NAME, DEF, ABBR, RETURN_CHARGES, ACC_ID, COMPC, BRNCH)
+SELECT s.BANK_CODE, s.BANK_DESC, s.ACCOUNT, s.BRANCH_NAME, s.DEF, s.ABBR, s.RETURN_CHARGES, s.ACC_ID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..COMPANY_BANK s
+  LOG ERRORS INTO ERR$_COMPANY_BANK ('KHI.COMPANY_BANK') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT COMPANY_BANK <- ISB.COMPANY_BANK
+INSERT INTO COMPANY_BANK
+  (BANK_CODE, BANK_DESC, ACCOUNT, BRANCH_NAME, DEF, ABBR, RETURN_CHARGES, ACC_ID, COMPC, BRNCH)
+SELECT s.BANK_CODE, s.BANK_DESC, s.ACCOUNT, s.BRANCH_NAME, s.DEF, s.ABBR, s.RETURN_CHARGES, s.ACC_ID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..COMPANY_BANK s
+  LOG ERRORS INTO ERR$_COMPANY_BANK ('ISB.COMPANY_BANK') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TRANSPORTER_DESC <- KHI.TRANSPORTER_DESC
+INSERT INTO TRANSPORTER_DESC
+  (TRANSP_NAME, TRANSP_CODE, PHONE, FAX, ADDRESS1, ADDRESS, EMAIL, COMPC, BRNCH)
+SELECT s.TRANSP_NAME, s.TRANSP_CODE, s.PHONE, s.FAX, s.ADDRESS1, s.ADDRESS, s.EMAIL, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TRANSPORTER_DESC s
+  LOG ERRORS INTO ERR$_TRANSPORTER_DESC ('KHI.TRANSPORTER_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TRANSPORTER_DESC <- ISB.TRANSPORTER_DESC
+INSERT INTO TRANSPORTER_DESC
+  (TRANSP_NAME, TRANSP_CODE, PHONE, FAX, ADDRESS1, ADDRESS, EMAIL, COMPC, BRNCH)
+SELECT s.TRANSP_NAME, s.TRANSP_CODE, s.PHONE, s.FAX, s.ADDRESS1, s.ADDRESS, s.EMAIL, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TRANSPORTER_DESC s
+  LOG ERRORS INTO ERR$_TRANSPORTER_DESC ('ISB.TRANSPORTER_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRODUCT_TYPE <- KHI.PRODUCT_TYPE
+INSERT INTO PRODUCT_TYPE
+  (PROD_ID, NAME, ORD_BY, GRP_ID_FK, GROUP_PRODUCT_ID, COMPC, BRNCH)
+SELECT s.PROD_ID, s.NAME, s.ORD_BY, s.GRP_ID_FK, s.GROUP_PRODUCT_ID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRODUCT_TYPE s
+  LOG ERRORS INTO ERR$_PRODUCT_TYPE ('KHI.PRODUCT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRODUCT_TYPE <- ISB.PRODUCT_TYPE
+INSERT INTO PRODUCT_TYPE
+  (PROD_ID, NAME, ORD_BY, GRP_ID_FK, GROUP_PRODUCT_ID, COMPC, BRNCH)
+SELECT s.PROD_ID, s.NAME, s.ORD_BY, s.GRP_ID_FK, s.GROUP_PRODUCT_ID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PRODUCT_TYPE s
+  LOG ERRORS INTO ERR$_PRODUCT_TYPE ('ISB.PRODUCT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRODUCT_DESC_T <- KHI.PRODUCT_DESC_T
+INSERT INTO PRODUCT_DESC_T
+  (PRODUCT_CODE, PRODUCT_NAME, AVG_RATE, CED, CODE, PRODUCT_TYPE, R_PRICE, COMPANY_PRICE, P_SALES_TAX, P_SALES_TAX_PER, PERIOD#, DATE_FROM, DATE_TO, STATUS, BRAND, HSCODE, COMPC, BRNCH)
+SELECT s.PRODUCT_CODE, s.PRODUCT_NAME, s.AVG_RATE, s.CED, s.CODE, s.PRODUCT_TYPE, s.R_PRICE, s.COMPANY_PRICE, s.P_SALES_TAX, s.P_SALES_TAX_PER, s.PERIOD#, s.DATE_FROM, s.DATE_TO, s.STATUS, s.BRAND, s.HSCODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRODUCT_DESC_T s
+  LOG ERRORS INTO ERR$_PRODUCT_DESC_T ('KHI.PRODUCT_DESC_T') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRODUCT_DESC_T <- ISB.PRODUCT_DESC_T
+INSERT INTO PRODUCT_DESC_T
+  (PRODUCT_CODE, PRODUCT_NAME, AVG_RATE, CED, CODE, PRODUCT_TYPE, R_PRICE, COMPANY_PRICE, P_SALES_TAX, P_SALES_TAX_PER, PERIOD#, DATE_FROM, DATE_TO, STATUS, BRAND, COMPC, BRNCH)
+SELECT s.PRODUCT_CODE, s.PRODUCT_NAME, s.AVG_RATE, s.CED, s.CODE, s.PRODUCT_TYPE, s.R_PRICE, s.COMPANY_PRICE, s.P_SALES_TAX, s.P_SALES_TAX_PER, s.PERIOD#, s.DATE_FROM, s.DATE_TO, s.STATUS, s.BRAND, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PRODUCT_DESC_T s
+  LOG ERRORS INTO ERR$_PRODUCT_DESC_T ('ISB.PRODUCT_DESC_T') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRODUCT_DESC_DTL <- KHI.PRODUCT_DESC_DTL
+INSERT INTO PRODUCT_DESC_DTL
+  (PDD_ID, PRODUCT_CODE, AVG_RATE, CED, DT_FROM, DT_TO, COMPC, BRNCH)
+SELECT s.PDD_ID, s.PRODUCT_CODE, s.AVG_RATE, s.CED, s.DT_FROM, s.DT_TO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRODUCT_DESC_DTL s
+  LOG ERRORS INTO ERR$_PRODUCT_DESC_DTL ('KHI.PRODUCT_DESC_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BAG <- KHI.BAG
+INSERT INTO BAG
+  (BAG_CD, BAG_DESC, PRODID, COMPC, BRNCH)
+SELECT s.BAG_CD, s.BAG_DESC, s.PRODID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BAG s
+  LOG ERRORS INTO ERR$_BAG ('KHI.BAG') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BAG <- ISB.BAGS_MASTER
+INSERT INTO BAG
+  (BAG_CD, BAG_DESC, STATS, COMPC, BRNCH)
+SELECT s.SERNO, s.DESCR, s.STATS, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..BAGS_MASTER s
+  LOG ERRORS INTO ERR$_BAG ('ISB.BAGS_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_ORDER_TYPE <- KHI.DELIVERY_ORDER_TYPE
+INSERT INTO DELIVERY_ORDER_TYPE
+  (DO_CODE, DO_DESC, DO_TYPE, PRODUCT_CODE, LOGO, CODE, MGROUP, COMPC, BRNCH)
+SELECT s.DO_CODE, s.DO_DESC, s.DO_TYPE, s.PRODUCT_CODE, TO_LOB(s.LOGO), s.CODE, s.MGROUP, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DELIVERY_ORDER_TYPE s
+  LOG ERRORS INTO ERR$_DELIVERY_ORDER_TYPE ('KHI.DELIVERY_ORDER_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_ORDER_TYPE <- ISB.DELIVERY_ORDER_TYPE
+INSERT INTO DELIVERY_ORDER_TYPE
+  (DO_CODE, DO_DESC, DO_TYPE, PRODUCT_CODE, LOGO, CODE, MGROUP, COMPC, BRNCH)
+SELECT s.DO_CODE, s.DO_DESC, s.DO_TYPE, s.PRODUCT_CODE, TO_LOB(s.LOGO), s.CODE, s.MGROUP, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DELIVERY_ORDER_TYPE s
+  LOG ERRORS INTO ERR$_DELIVERY_ORDER_TYPE ('ISB.DELIVERY_ORDER_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_MASTER <- KHI.CUSTOMER_MASTER
+INSERT INTO CUSTOMER_MASTER
+  (MCODE, DESCR, SNAME, CR_LIMIT, COMPC, BRNCH)
+SELECT s.MCODE, s.DESCR, s.SNAME, s.CR_LIMIT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_MASTER s
+  LOG ERRORS INTO ERR$_CUSTOMER_MASTER ('KHI.CUSTOMER_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_INFO <- KHI.CUSTOMER_INFO
+INSERT INTO CUSTOMER_INFO
+  (CUSTOMER_CODE, ZONE_CODE, CHANNEL_CODE, CUSTOMER_NAME, CUSTOMER_ADDRESS1, CUSTOMER_ADDRESS2, PH_NO, MOBILE_NO, FAX_NO, EMAIL, CUSTOMER_TYPE, CREDIT_LIMITE, CASH_DEPOSIT, DEBIT_AMOUNT, CREDIT_AMOUNT, MODE_OF_BUS, CROSS_REF, ENTER_BY, ENTER_DATE, TAX_DEDUCT, SECURITY_DESC, MISC, CLOSED, SALES_TAX_TYPE, SALES_TAX_NO, CLEAN, TRANSITORY, BILLING, ADVANCE, SECURITY, INCENTIVE, TAX, BOUNCE, CARD_OPEN_DATE, CARD_CLOSED_DATE, BUFFER, NTN, CNIC, CUSTOMER_GROUP, GL_CODE, ACTIVE, WH_TAX, MCODE, CUSTM_M, TRNSP, SALES_TAX_STATS, INCOM_TAX_TYPE, INCOM_TAX_STATS, REGISTER_NAME, JURISDICTION, REGISTER_NUMBER, TERRITORY_CODE, REG_NO, BANK_FLOAT, AREA_CODE, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.ZONE_CODE, s.CHANNEL_CODE, s.CUSTOMER_NAME, s.CUSTOMER_ADDRESS1, s.CUSTOMER_ADDRESS2, s.PH_NO, s.MOBILE_NO, s.FAX_NO, s.EMAIL, s.CUSTOMER_TYPE, s.CREDIT_LIMITE, s.CASH_DEPOSIT, s.DEBIT_AMOUNT, s.CREDIT_AMOUNT, s.MODE_OF_BUS, s.CROSS_REF, s.ENTER_BY, s.ENTER_DATE, s.TAX_DEDUCT, s.SECURITY_DESC, s.MISC, s.CLOSED, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.CLEAN, s.TRANSITORY, s.BILLING, s.ADVANCE, s.SECURITY, s.INCENTIVE, s.TAX, s.BOUNCE, s.CARD_OPEN_DATE, s.CARD_CLOSED_DATE, s.BUFFER, s.NTN, s.CNIC, s.CUSTOMER_GROUP, s.GL_CODE, s.ACTIVE, s.WH_TAX, s.MCODE, s.CUSTM_M, s.TRNSP, s.SALES_TAX_STATS, s.INCOM_TAX_TYPE, s.INCOM_TAX_STATS, s.REGISTER_NAME, s.JURISDICTION, s.REGISTER_NUMBER, s.TERRITORY_CODE, s.REG_NO, s.BANK_FLOAT, s.AREA_CODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_INFO s
+  LOG ERRORS INTO ERR$_CUSTOMER_INFO ('KHI.CUSTOMER_INFO') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_INFO <- ISB.CUSTOMER_INFO
+INSERT INTO CUSTOMER_INFO
+  (CUSTOMER_CODE, ZONE_CODE, CHANNEL_CODE, CUSTOMER_NAME, CUSTOMER_ADDRESS1, CUSTOMER_ADDRESS2, PH_NO, MOBILE_NO, FAX_NO, EMAIL, CUSTOMER_TYPE, CREDIT_LIMITE, CASH_DEPOSIT, DEBIT_AMOUNT, CREDIT_AMOUNT, MODE_OF_BUS, CROSS_REF, ENTER_BY, ENTER_DATE, TAX_DEDUCT, SECURITY_DESC, MISC, CLOSED, SALES_TAX_TYPE, SALES_TAX_NO, CLEAN, TRANSITORY, BILLING, ADVANCE, SECURITY, INCENTIVE, TAX, BOUNCE, CARD_OPEN_DATE, CARD_CLOSED_DATE, BUFFER, NTN, CNIC, CUSTOMER_GROUP, GL_CODE, ACTIVE, WH_TAX, MCODE, CUSTM_M, TRNSP, SALES_TAX_STATS, INCOM_TAX_TYPE, INCOM_TAX_STATS, REGISTER_NAME, JURISDICTION, REGISTER_NUMBER, TERRITORY_CODE, REG_NO, BANK_FLOAT, AREA_CODE, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.ZONE_CODE, s.CHANNEL_CODE, s.CUSTOMER_NAME, s.CUSTOMER_ADDRESS1, s.CUSTOMER_ADDRESS2, s.PH_NO, s.MOBILE_NO, s.FAX_NO, s.EMAIL, s.CUSTOMER_TYPE, s.CREDIT_LIMITE, s.CASH_DEPOSIT, s.DEBIT_AMOUNT, s.CREDIT_AMOUNT, s.MODE_OF_BUS, s.CROSS_REF, s.ENTER_BY, s.ENTER_DATE, s.TAX_DEDUCT, s.SECURITY_DESC, s.MISC, s.CLOSED, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.CLEAN, s.TRANSITORY, s.BILLING, s.ADVANCE, s.SECURITY, s.INCENTIVE, s.TAX, s.BOUNCE, s.CARD_OPEN_DATE, s.CARD_CLOSED_DATE, s.BUFFER, s.NTN, s.CNIC, s.CUSTOMER_GROUP, s.GL_CODE, s.ACTIVE, s.WH_TAX, s.MCODE, s.CUSTM_M, s.TRNSP, s.SALES_TAX_STATS, s.INCOM_TAX_TYPE, s.INCOM_TAX_STATS, s.REGISTER_NAME, s.JURISDICTION, s.REGISTER_NUMBER, s.TERRITORY_CODE, s.REG_NO, s.BANK_FLOAT, s.AREA_CODE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CUSTOMER_INFO s
+  LOG ERRORS INTO ERR$_CUSTOMER_INFO ('ISB.CUSTOMER_INFO') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_AREA <- KHI.CUSTOMER_AREA
+INSERT INTO CUSTOMER_AREA
+  (CUST_ID, ZONE_CODE, TERRITORY_CODE, AREA_DOC, COMPC, BRNCH)
+SELECT s.CUST_ID, s.ZONE_CODE, s.TERRITORY_CODE, s.AREA_DOC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_AREA s
+  LOG ERRORS INTO ERR$_CUSTOMER_AREA ('KHI.CUSTOMER_AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_AREA <- ISB.CUSTOMER_AREA
+INSERT INTO CUSTOMER_AREA
+  (CUST_ID, ZONE_CODE, TERRITORY_CODE, AREA_DOC, COMPC, BRNCH)
+SELECT s.CUST_ID, s.ZONE_CODE, s.TERRITORY_CODE, s.AREA_DOC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CUSTOMER_AREA s
+  LOG ERRORS INTO ERR$_CUSTOMER_AREA ('ISB.CUSTOMER_AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_BANK_ACC <- KHI.CUSTOMER_BANK_ACC
+INSERT INTO CUSTOMER_BANK_ACC
+  (BANK_CODE, ACCOUNT_NO, CUSTOMER_CODE, ZONE_CODE, BRANCH_NAME, CUST_ACC_ID, COMPC, BRNCH)
+SELECT s.BANK_CODE, s.ACCOUNT_NO, s.CUSTOMER_CODE, s.ZONE_CODE, s.BRANCH_NAME, s.CUST_ACC_ID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_BANK_ACC s
+  LOG ERRORS INTO ERR$_CUSTOMER_BANK_ACC ('KHI.CUSTOMER_BANK_ACC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_BANK_ACC <- ISB.CUSTOMER_BANK_ACC
+INSERT INTO CUSTOMER_BANK_ACC
+  (BANK_CODE, ACCOUNT_NO, CUSTOMER_CODE, ZONE_CODE, BRANCH_NAME, CUST_ACC_ID, COMPC, BRNCH)
+SELECT s.BANK_CODE, s.ACCOUNT_NO, s.CUSTOMER_CODE, s.ZONE_CODE, s.BRANCH_NAME, s.CUST_ACC_ID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CUSTOMER_BANK_ACC s
+  LOG ERRORS INTO ERR$_CUSTOMER_BANK_ACC ('ISB.CUSTOMER_BANK_ACC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SECURITY_DEPOSIT <- KHI.SECURITY_DEPOSIT
+INSERT INTO SECURITY_DEPOSIT
+  (CUSTOMER_CODE, DESCRIPTION, AMOUNT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.DESCRIPTION, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SECURITY_DEPOSIT s
+  LOG ERRORS INTO ERR$_SECURITY_DEPOSIT ('KHI.SECURITY_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SECURITY_DEPOSIT <- ISB.SECURITY_DEPOSIT
+INSERT INTO SECURITY_DEPOSIT
+  (CUSTOMER_CODE, DESCRIPTION, AMOUNT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.DESCRIPTION, s.AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SECURITY_DEPOSIT s
+  LOG ERRORS INTO ERR$_SECURITY_DEPOSIT ('ISB.SECURITY_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CSECURITY_DEPOSIT <- KHI.CSECURITY_DEPOSIT
+INSERT INTO CSECURITY_DEPOSIT
+  (RECEIPT_NO, TDATE, CUSTOMER_CODE, TYPE, CHQ_NO, AMOUNT, REMARKS, DR_CR, CHQ_DATE, ENTER_BY, ENTER_DATE, PRINT, POST, VOUCHER_NO, VOUCHER_DATE, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.TDATE, s.CUSTOMER_CODE, s.TYPE, s.CHQ_NO, s.AMOUNT, s.REMARKS, s.DR_CR, s.CHQ_DATE, s.ENTER_BY, s.ENTER_DATE, s.PRINT, s.POST, s.VOUCHER_NO, s.VOUCHER_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CSECURITY_DEPOSIT s
+  LOG ERRORS INTO ERR$_CSECURITY_DEPOSIT ('KHI.CSECURITY_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CSECURITY_DEPOSIT <- ISB.CSECURITY_DEPOSIT
+INSERT INTO CSECURITY_DEPOSIT
+  (RECEIPT_NO, TDATE, CUSTOMER_CODE, TYPE, CHQ_NO, AMOUNT, REMARKS, DR_CR, CHQ_DATE, ENTER_BY, ENTER_DATE, PRINT, POST, VOUCHER_NO, VOUCHER_DATE, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.TDATE, s.CUSTOMER_CODE, s.TYPE, s.CHQ_NO, s.AMOUNT, s.REMARKS, s.DR_CR, s.CHQ_DATE, s.ENTER_BY, s.ENTER_DATE, s.PRINT, s.POST, s.VOUCHER_NO, s.VOUCHER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CSECURITY_DEPOSIT s
+  LOG ERRORS INTO ERR$_CSECURITY_DEPOSIT ('ISB.CSECURITY_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BLOCK_CUSTOMER <- KHI.BLOCK_CUSTOMER
+INSERT INTO BLOCK_CUSTOMER
+  (B_CUSTOMER_CODE, G_CODE, REMS, COMPC, BRNCH)
+SELECT s.B_CUSTOMER_CODE, s.G_CODE, s.REMS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BLOCK_CUSTOMER s
+  LOG ERRORS INTO ERR$_BLOCK_CUSTOMER ('KHI.BLOCK_CUSTOMER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_LIMITS <- KHI.CREDIT_LIMITS
+INSERT INTO CREDIT_LIMITS
+  (CUSTOMER_CODE, CLEAN, CLEAN_A, TRANSITORY, TRANSITORY_A, BILLING, BILLING_A, ADVANCE, ADVANCE_A, SECURITY, SECURITY_A, INCENTIVE, INCENTIVE_A, TAX, TAX_A, BOUNCE, BOUNCE_A, BUFFER, BUFFER_A, BANK_FLOAT_A, BANK_FLOAT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.CLEAN, s.CLEAN_A, s.TRANSITORY, s.TRANSITORY_A, s.BILLING, s.BILLING_A, s.ADVANCE, s.ADVANCE_A, s.SECURITY, s.SECURITY_A, s.INCENTIVE, s.INCENTIVE_A, s.TAX, s.TAX_A, s.BOUNCE, s.BOUNCE_A, s.BUFFER, s.BUFFER_A, s.BANK_FLOAT_A, s.BANK_FLOAT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_LIMITS s
+  LOG ERRORS INTO ERR$_CREDIT_LIMITS ('KHI.CREDIT_LIMITS') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_LIMITS <- ISB.CREDIT_LIMITS
+INSERT INTO CREDIT_LIMITS
+  (CUSTOMER_CODE, CLEAN, CLEAN_A, TRANSITORY, TRANSITORY_A, BILLING, BILLING_A, ADVANCE, ADVANCE_A, SECURITY, SECURITY_A, INCENTIVE, INCENTIVE_A, TAX, TAX_A, BOUNCE, BOUNCE_A, BUFFER, BUFFER_A, BANK_FLOAT_A, BANK_FLOAT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.CLEAN, s.CLEAN_A, s.TRANSITORY, s.TRANSITORY_A, s.BILLING, s.BILLING_A, s.ADVANCE, s.ADVANCE_A, s.SECURITY, s.SECURITY_A, s.INCENTIVE, s.INCENTIVE_A, s.TAX, s.TAX_A, s.BOUNCE, s.BOUNCE_A, s.BUFFER, s.BUFFER_A, s.BANK_FLOAT_A, s.BANK_FLOAT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_LIMITS s
+  LOG ERRORS INTO ERR$_CREDIT_LIMITS ('ISB.CREDIT_LIMITS') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_LIMITS_F <- KHI.CREDIT_LIMITS_F
+INSERT INTO CREDIT_LIMITS_F
+  (SERNO, CUSTOMER_CODE, WDATE, OC_BAL, LAST_APROVED, AP_AMOUNT, REMARK, PTYPE, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTOMER_CODE, s.WDATE, s.OC_BAL, s.LAST_APROVED, s.AP_AMOUNT, s.REMARK, s.PTYPE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_LIMITS_F s
+  LOG ERRORS INTO ERR$_CREDIT_LIMITS_F ('KHI.CREDIT_LIMITS_F') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_LIMITS_F <- ISB.CREDIT_LIMITS_F
+INSERT INTO CREDIT_LIMITS_F
+  (SERNO, CUSTOMER_CODE, WDATE, OC_BAL, LAST_APROVED, AP_AMOUNT, REMARK, PTYPE, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTOMER_CODE, s.WDATE, s.OC_BAL, s.LAST_APROVED, s.AP_AMOUNT, s.REMARK, s.PTYPE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_LIMITS_F s
+  LOG ERRORS INTO ERR$_CREDIT_LIMITS_F ('ISB.CREDIT_LIMITS_F') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_APP_MASTER <- KHI.CREDIT_APP_MASTER
+INSERT INTO CREDIT_APP_MASTER
+  (CAS_NO, CAS_DATE, CREDIT_CODE, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.CAS_NO, s.CAS_DATE, s.CREDIT_CODE, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_APP_MASTER s
+  LOG ERRORS INTO ERR$_CREDIT_APP_MASTER ('KHI.CREDIT_APP_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_APP_MASTER <- ISB.CREDIT_APP_MASTER
+INSERT INTO CREDIT_APP_MASTER
+  (CAS_NO, CAS_DATE, CREDIT_CODE, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.CAS_NO, s.CAS_DATE, s.CREDIT_CODE, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_APP_MASTER s
+  LOG ERRORS INTO ERR$_CREDIT_APP_MASTER ('ISB.CREDIT_APP_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_APP_DETAIL <- KHI.CREDIT_APP_DETAIL
+INSERT INTO CREDIT_APP_DETAIL
+  (CAS_NO, CUSTOMER_CODE, CREDIT_LIMIT, START_FROM, EXPIRE_ON, COMPC, BRNCH)
+SELECT s.CAS_NO, s.CUSTOMER_CODE, s.CREDIT_LIMIT, s.START_FROM, s.EXPIRE_ON, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_APP_DETAIL s
+  LOG ERRORS INTO ERR$_CREDIT_APP_DETAIL ('KHI.CREDIT_APP_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_APP_DETAIL <- ISB.CREDIT_APP_DETAIL
+INSERT INTO CREDIT_APP_DETAIL
+  (CAS_NO, CUSTOMER_CODE, CREDIT_LIMIT, START_FROM, EXPIRE_ON, COMPC, BRNCH)
+SELECT s.CAS_NO, s.CUSTOMER_CODE, s.CREDIT_LIMIT, s.START_FROM, s.EXPIRE_ON, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_APP_DETAIL s
+  LOG ERRORS INTO ERR$_CREDIT_APP_DETAIL ('ISB.CREDIT_APP_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_CREDIT_APP <- KHI.CUSTOMER_CREDIT_APP
+INSERT INTO CUSTOMER_CREDIT_APP
+  (SERNO, CUSTM, CLIMIT, EDATE, REQUEST_DT, REQUESTER, APP_DATE, APP_NAME, APP, UNIT, UNIT_NM, APP_TYPE, TAX_TYPE, AMT, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTM, s.CLIMIT, s.EDATE, s.REQUEST_DT, s.REQUESTER, s.APP_DATE, s.APP_NAME, s.APP, s.UNIT, s.UNIT_NM, s.APP_TYPE, s.TAX_TYPE, s.AMT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_CREDIT_APP s
+  LOG ERRORS INTO ERR$_CUSTOMER_CREDIT_APP ('KHI.CUSTOMER_CREDIT_APP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_CREDIT_APP <- ISB.CUSTOMER_CREDIT_APP
+INSERT INTO CUSTOMER_CREDIT_APP
+  (SERNO, CUSTM, CLIMIT, EDATE, REQUEST_DT, REQUESTER, APP_DATE, APP_NAME, APP, UNIT, UNIT_NM, APP_TYPE, TAX_TYPE, AMT, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTM, s.CLIMIT, s.EDATE, s.REQUEST_DT, s.REQUESTER, s.APP_DATE, s.APP_NAME, s.APP, s.UNIT, s.UNIT_NM, s.APP_TYPE, s.TAX_TYPE, s.AMT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CUSTOMER_CREDIT_APP s
+  LOG ERRORS INTO ERR$_CUSTOMER_CREDIT_APP ('ISB.CUSTOMER_CREDIT_APP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_MONITOR <- ISB.CREDIT_MONITOR
+INSERT INTO CREDIT_MONITOR
+  (CUSTOMER_CODE, TDATE, CREDIT_TYPE, AMOUNT, MODULE, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.TDATE, s.CREDIT_TYPE, s.AMOUNT, s.MODULE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_MONITOR s
+  LOG ERRORS INTO ERR$_CREDIT_MONITOR ('ISB.CREDIT_MONITOR') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TRADE_PRICE <- KHI.TRADE_PRICE
+INSERT INTO TRADE_PRICE
+  (AREA_CODE, AREA_DESC, PRODUCT_CODE, TRADE_DISC, ENTER_BY, ENTER_DATE, INVOICE_PRICE, PRICE_EXCL_ST, COMPANY_PRICE, ACTIVE, SALES_TAX_PERCENT, SALES_TAX_AMT, RETAIL_PRICE, CED, PRICE_DISCOUNT, AREA, DISTRICT, AREACD_PK, CUSTOMER_CODE, EF_DATE, TARGET, CITY_CD, COMPC, BRNCH)
+SELECT s.AREA_CODE, s.AREA_DESC, s.PRODUCT_CODE, s.TRADE_DISC, s.ENTER_BY, s.ENTER_DATE, s.INVOICE_PRICE, s.PRICE_EXCL_ST, s.COMPANY_PRICE, s.ACTIVE, s.SALES_TAX_PERCENT, s.SALES_TAX_AMT, s.RETAIL_PRICE, s.CED, s.PRICE_DISCOUNT, s.AREA, s.DISTRICT, s.AREACD_PK, s.CUSTOMER_CODE, s.EF_DATE, s.TARGET, s.CITY_CD, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TRADE_PRICE s
+  LOG ERRORS INTO ERR$_TRADE_PRICE ('KHI.TRADE_PRICE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TRADE_PRICE <- ISB.TRADE_PRICE
+INSERT INTO TRADE_PRICE
+  (AREA_CODE, AREA_DESC, PRODUCT_CODE, TRADE_DISC, ENTER_BY, ENTER_DATE, INVOICE_PRICE, PRICE_EXCL_ST, COMPANY_PRICE, ACTIVE, SALES_TAX_PERCENT, SALES_TAX_AMT, RETAIL_PRICE, CED, PRICE_DISCOUNT, AREA, DISTRICT, AREACD_PK, CUSTOMER_CODE, EF_DATE, TARGET, COMPC, BRNCH)
+SELECT s.AREA_CODE, s.AREA_DESC, s.PRODUCT_CODE, s.TRADE_DISC, s.ENTER_BY, s.ENTER_DATE, s.INVOICE_PRICE, s.PRICE_EXCL_ST, s.COMPANY_PRICE, s.ACTIVE, s.SALES_TAX_PERCENT, s.SALES_TAX_AMT, s.RETAIL_PRICE, s.CED, s.PRICE_DISCOUNT, s.AREA, s.DISTRICT, s.AREACD_PK, s.CUSTOMER_CODE, s.EF_DATE, s.TARGET, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TRADE_PRICE s
+  LOG ERRORS INTO ERR$_TRADE_PRICE ('ISB.TRADE_PRICE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT OC_PRICE_DTL <- ISB.OC_PRICE_DTL
+INSERT INTO OC_PRICE_DTL
+  (D_ORDER_NO, D_ORDER_DATE, D_CUSTOMER_CODE, D_PRICE_CODE, D_RETAIL_PRICE, D_TRADE_DISC, D_CED, D_SALES_TAX, D_CONS_PRICE, D_NET_BOOK_PRICE, D_TOT_NET, STATS, ENTRY_DATE, COMPC, BRNCH)
+SELECT s.D_ORDER_NO, s.D_ORDER_DATE, s.D_CUSTOMER_CODE, s.D_PRICE_CODE, s.D_RETAIL_PRICE, s.D_TRADE_DISC, s.D_CED, s.D_SALES_TAX, s.D_CONS_PRICE, s.D_NET_BOOK_PRICE, s.D_TOT_NET, s.STATS, s.ENTRY_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..OC_PRICE_DTL s
+  LOG ERRORS INTO ERR$_OC_PRICE_DTL ('ISB.OC_PRICE_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_M <- KHI.AREA_RATES_M
+INSERT INTO AREA_RATES_M
+  (SERNO, WDATE, STATUS, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.STATUS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AREA_RATES_M s
+  LOG ERRORS INTO ERR$_AREA_RATES_M ('KHI.AREA_RATES_M') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_M <- ISB.AREA_RATES_M
+INSERT INTO AREA_RATES_M
+  (SERNO, WDATE, STATUS, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.STATUS, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..AREA_RATES_M s
+  LOG ERRORS INTO ERR$_AREA_RATES_M ('ISB.AREA_RATES_M') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_P <- KHI.AREA_RATES_P
+INSERT INTO AREA_RATES_P
+  (SERNO, P_LNKNO, PRODUCT_CODE, COMPC, BRNCH)
+SELECT s.SERNO, s.P_LNKNO, s.PRODUCT_CODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AREA_RATES_P s
+  LOG ERRORS INTO ERR$_AREA_RATES_P ('KHI.AREA_RATES_P') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_P <- ISB.AREA_RATES_P
+INSERT INTO AREA_RATES_P
+  (SERNO, P_LNKNO, PRODUCT_CODE, COMPC, BRNCH)
+SELECT s.SERNO, s.P_LNKNO, s.PRODUCT_CODE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..AREA_RATES_P s
+  LOG ERRORS INTO ERR$_AREA_RATES_P ('ISB.AREA_RATES_P') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_D <- KHI.AREA_RATES_D
+INSERT INTO AREA_RATES_D
+  (SERNO, LNKNO, P_LNKNO, ZONE_CODE, TERRITORY_CODE, AREA_DOC, BOOKING_P, FREIGHT, NET_BOOK, REBATE, EX_FACTORY, TAX_236, FED, SALES_TAX, NET_RET, MRP, LINKNO_DIST, COMPC, BRNCH)
+SELECT s.SERNO, s.LNKNO, s.P_LNKNO, s.ZONE_CODE, s.TERRITORY_CODE, s.AREA_DOC, s.BOOKING_P, s.FREIGHT, s.NET_BOOK, s.REBATE, s.EX_FACTORY, s.TAX_236, s.FED, s.SALES_TAX, s.NET_RET, s.MRP, s.LINKNO_DIST, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AREA_RATES_D s
+  LOG ERRORS INTO ERR$_AREA_RATES_D ('KHI.AREA_RATES_D') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_D <- ISB.AREA_RATES_D
+INSERT INTO AREA_RATES_D
+  (SERNO, LNKNO, P_LNKNO, ZONE_CODE, TERRITORY_CODE, AREA_DOC, BOOKING_P, FREIGHT, NET_BOOK, REBATE, EX_FACTORY, TAX_236, FED, SALES_TAX, NET_RET, MRP, LINKNO_DIST, COMPC, BRNCH)
+SELECT s.SERNO, s.LNKNO, s.P_LNKNO, s.ZONE_CODE, s.TERRITORY_CODE, s.AREA_DOC, s.BOOKING_P, s.FREIGHT, s.NET_BOOK, s.REBATE, s.EX_FACTORY, s.TAX_236, s.FED, s.SALES_TAX, s.NET_RET, s.MRP, s.LINKNO_DIST, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..AREA_RATES_D s
+  LOG ERRORS INTO ERR$_AREA_RATES_D ('ISB.AREA_RATES_D') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ZONE_CITY_FRIEGHT_M <- ISB.ZONE_CITY_FRIEGHT_M
+INSERT INTO ZONE_CITY_FRIEGHT_M
+  (SERNO, WDATE, EDATE, STATUS, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.EDATE, s.STATUS, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ZONE_CITY_FRIEGHT_M s
+  LOG ERRORS INTO ERR$_ZONE_CITY_FRIEGHT_M ('ISB.ZONE_CITY_FRIEGHT_M') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ZONE_CITY_FRIEGHT_D <- ISB.ZONE_CITY_FRIEGHT_D
+INSERT INTO ZONE_CITY_FRIEGHT_D
+  (SERNO, AREA_DOC, FRIEGHT, FRIEGHT_PER, COMPC, BRNCH)
+SELECT s.SERNO, s.AREA_DOC, s.FRIEGHT, s.FRIEGHT_PER, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ZONE_CITY_FRIEGHT_D s
+  LOG ERRORS INTO ERR$_ZONE_CITY_FRIEGHT_D ('ISB.ZONE_CITY_FRIEGHT_D') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_MST <- KHI.TARGET_MST
+INSERT INTO TARGET_MST
+  (SERNO, WDATE, MNTH, CUSTM, REMRK, QTY, AMT, STATS, WORK_DAYS, COMPC, BRNCH)
+SELECT NVL(s.SERNO, s.TRG_NO), s.WDATE, s.MNTH, s.CUSTM, NVL(s.REMRK, s.DESCR), s.QTY, s.AMT, s.STATS, s.WORK_DAYS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TARGET_MST s
+  LOG ERRORS INTO ERR$_TARGET_MST ('KHI.TARGET_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_MST <- ISB.TARGET_MST
+INSERT INTO TARGET_MST
+  (SERNO, WDATE, MNTH, CUSTM, REMRK, QTY, AMT, STATS, WORK_DAYS, COMPC, BRNCH)
+SELECT NVL(s.TRG_NO, s.SERNO), s.WDATE, s.MNTH, s.CUSTM, NVL(s.DESCR, s.REMRK), s.QTY, s.AMT, s.STATS, s.WORK_DAYS, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TARGET_MST s
+  LOG ERRORS INTO ERR$_TARGET_MST ('ISB.TARGET_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_CUST <- KHI.TARGET_CUST
+INSERT INTO TARGET_CUST
+  (TRG_NO, SERNO, CUST_ID, QTY, AMT, QTY2, QTY3, COMPC, BRNCH)
+SELECT s.TRG_NO, s.SERNO, s.CUST_ID, s.QTY, s.AMT, s.QTY2, s.QTY3, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TARGET_CUST s
+  LOG ERRORS INTO ERR$_TARGET_CUST ('KHI.TARGET_CUST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_CUST <- ISB.TARGET_CUST
+INSERT INTO TARGET_CUST
+  (TRG_NO, SERNO, CUST_ID, QTY, AMT, QTY2, QTY3, COMPC, BRNCH)
+SELECT s.TRG_NO, s.SERNO, s.CUST_ID, s.QTY, s.AMT, s.QTY2, s.QTY3, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TARGET_CUST s
+  LOG ERRORS INTO ERR$_TARGET_CUST ('ISB.TARGET_CUST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_CUST_AREA <- KHI.TARGET_CUST_AREA
+INSERT INTO TARGET_CUST_AREA
+  (TRG_NO, SERNO, LNKNO, CUST_ID, AREA_CD, QTY, AMT, QTY2, QTY3, COMPC, BRNCH)
+SELECT s.TRG_NO, s.SERNO, s.LNKNO, s.CUST_ID, s.AREA_CD, s.QTY, s.AMT, s.QTY2, s.QTY3, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TARGET_CUST_AREA s
+  LOG ERRORS INTO ERR$_TARGET_CUST_AREA ('KHI.TARGET_CUST_AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_CUST_AREA <- ISB.TARGET_CUST_AREA
+INSERT INTO TARGET_CUST_AREA
+  (TRG_NO, SERNO, LNKNO, CUST_ID, AREA_CD, QTY, AMT, QTY2, QTY3, COMPC, BRNCH)
+SELECT s.TRG_NO, s.SERNO, s.LNKNO, s.CUST_ID, s.AREA_CD, s.QTY, s.AMT, s.QTY2, s.QTY3, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TARGET_CUST_AREA s
+  LOG ERRORS INTO ERR$_TARGET_CUST_AREA ('ISB.TARGET_CUST_AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_DTL_CTY <- KHI.TARGET_DTL_CTY
+INSERT INTO TARGET_DTL_CTY
+  (SERNO, DIST_CD, TARGET, REMRK, DOCNO, AREA, COMPC, BRNCH)
+SELECT s.SERNO, s.DIST_CD, s.TARGET, s.REMRK, s.DOCNO, s.AREA, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TARGET_DTL_CTY s
+  LOG ERRORS INTO ERR$_TARGET_DTL_CTY ('KHI.TARGET_DTL_CTY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_PERC_MST <- ISB.TARGET_PERC_MST
+INSERT INTO TARGET_PERC_MST
+  (PERC_ID, MNTH, REMARKS, TAR_MNTH, COMPC, BRNCH)
+SELECT s.PERC_ID, s.MNTH, s.REMARKS, s.TAR_MNTH, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TARGET_PERC_MST s
+  LOG ERRORS INTO ERR$_TARGET_PERC_MST ('ISB.TARGET_PERC_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TARGET_PERC_DTL <- ISB.TARGET_PERC_DTL
+INSERT INTO TARGET_PERC_DTL
+  (PERC_ID, TAR_PERC, AMOUNT, TAR_PERC_1, TAR_PERC_2, AMOUNT_2, SEPCIAL_TAR_PERC, SPECIAL_AMOUNT, ADDITION_TAR_PERC, ADDITION_AMOUNT, COMPC, BRNCH)
+SELECT s.PERC_ID, s.TAR_PERC, s.AMOUNT, s.TAR_PERC_1, s.TAR_PERC_2, s.AMOUNT_2, s.SEPCIAL_TAR_PERC, s.SPECIAL_AMOUNT, s.ADDITION_TAR_PERC, s.ADDITION_AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TARGET_PERC_DTL s
+  LOG ERRORS INTO ERR$_TARGET_PERC_DTL ('ISB.TARGET_PERC_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INCENTIVE <- KHI.INCENTIVE
+INSERT INTO INCENTIVE
+  (SRL_NO, MEMO_DATE, MEMO_NO, DATE_FROM, DATE_TO, CUSTOMER_FROM, CUSTOMER_TO, REMARKS, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, POST, CLEAN, TOTAL, INCENTIVE, TRANSITORY, BUFFER, COMPC, BRNCH)
+SELECT s.SRL_NO, s.MEMO_DATE, s.MEMO_NO, s.DATE_FROM, s.DATE_TO, s.CUSTOMER_FROM, s.CUSTOMER_TO, s.REMARKS, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.POST, s.CLEAN, s.TOTAL, s.INCENTIVE, s.TRANSITORY, s.BUFFER, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..INCENTIVE s
+  LOG ERRORS INTO ERR$_INCENTIVE ('KHI.INCENTIVE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INCENTIVE <- ISB.INCENTIVE
+INSERT INTO INCENTIVE
+  (SRL_NO, MEMO_DATE, MEMO_NO, DATE_FROM, DATE_TO, CUSTOMER_FROM, CUSTOMER_TO, REMARKS, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, POST, CLEAN, TOTAL, INCENTIVE, TRANSITORY, BUFFER, COMPC, BRNCH)
+SELECT s.SRL_NO, s.MEMO_DATE, s.MEMO_NO, s.DATE_FROM, s.DATE_TO, s.CUSTOMER_FROM, s.CUSTOMER_TO, s.REMARKS, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.POST, s.CLEAN, s.TOTAL, s.INCENTIVE, s.TRANSITORY, s.BUFFER, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..INCENTIVE s
+  LOG ERRORS INTO ERR$_INCENTIVE ('ISB.INCENTIVE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INCENTIVE_PRODUCT <- KHI.INCENTIVE_PRODUCT
+INSERT INTO INCENTIVE_PRODUCT
+  (SRL_NO, PRODUCT_CODE, RATE, COMPC, BRNCH)
+SELECT s.SRL_NO, s.PRODUCT_CODE, s.RATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..INCENTIVE_PRODUCT s
+  LOG ERRORS INTO ERR$_INCENTIVE_PRODUCT ('KHI.INCENTIVE_PRODUCT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INCENTIVE_PRODUCT <- ISB.INCENTIVE_PRODUCT
+INSERT INTO INCENTIVE_PRODUCT
+  (SRL_NO, PRODUCT_CODE, RATE, COMPC, BRNCH)
+SELECT s.SRL_NO, s.PRODUCT_CODE, s.RATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..INCENTIVE_PRODUCT s
+  LOG ERRORS INTO ERR$_INCENTIVE_PRODUCT ('ISB.INCENTIVE_PRODUCT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INCENTIVE_DETAIL <- KHI.INCENTIVE_DETAIL
+INSERT INTO INCENTIVE_DETAIL
+  (SRL_NO, SR_NO, CUSTOMER_CODE, PRODUCT_CODE, QUANTITY, RATE, CR_NOTE_NO, AMOUNT, ACTUAL_QTY, COMPC, BRNCH)
+SELECT s.SRL_NO, s.SR_NO, s.CUSTOMER_CODE, s.PRODUCT_CODE, s.QUANTITY, s.RATE, s.CR_NOTE_NO, s.AMOUNT, s.ACTUAL_QTY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..INCENTIVE_DETAIL s
+  LOG ERRORS INTO ERR$_INCENTIVE_DETAIL ('KHI.INCENTIVE_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT INCENTIVE_DETAIL <- ISB.INCENTIVE_DETAIL
+INSERT INTO INCENTIVE_DETAIL
+  (SRL_NO, SR_NO, CUSTOMER_CODE, PRODUCT_CODE, QUANTITY, RATE, CR_NOTE_NO, AMOUNT, ACTUAL_QTY, COMPC, BRNCH)
+SELECT s.SRL_NO, s.SR_NO, s.CUSTOMER_CODE, s.PRODUCT_CODE, s.QUANTITY, s.RATE, s.CR_NOTE_NO, s.AMOUNT, s.ACTUAL_QTY, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..INCENTIVE_DETAIL s
+  LOG ERRORS INTO ERR$_INCENTIVE_DETAIL ('ISB.INCENTIVE_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_REQUEST_MASTER <- KHI.SALES_REQUEST_MASTER
+INSERT INTO SALES_REQUEST_MASTER
+  (SRF_NO, PRODUCT_CODE, CUSTOMER_CODE, SRF_DATE, QUANTITY, MODE_OF_DELIV, MODE_OF_TRANSP, LOCAL_EXPORT, REMARKS, POST_BY, NAME_OF_PER, CODE_NO, ADDRESS, TERM_OF_SALE, SPECIAL_INST, NO_OF_BAGS, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, SALES_TAX_TYPE, SALES_TAX_NO, REG, MOD_REC_NO, CASH_CHEQ_CD, BAG_CD, NTN, CNIC, PINO, FORM_E, LC_NO, BRV_NO, BRV_AMONT, BRV_REM, COLOR, TCHNG_ALLOW, FREIGHT_STATUS, AREA_CODE, SILO, TRANSPORTER_2, COMPC, BRNCH)
+SELECT s.SRF_NO, s.PRODUCT_CODE, s.CUSTOMER_CODE, s.SRF_DATE, s.QUANTITY, s.MODE_OF_DELIV, s.MODE_OF_TRANSP, s.LOCAL_EXPORT, s.REMARKS, s.POST_BY, s.NAME_OF_PER, s.CODE_NO, s.ADDRESS, s.TERM_OF_SALE, s.SPECIAL_INST, s.NO_OF_BAGS, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.REG, s.MOD_REC_NO, s.CASH_CHEQ_CD, NVL(s.BAG_CD, s.BAGTYP), s.NTN, s.CNIC, s.PINO, s.FORM_E, s.LC_NO, s.BRV_NO, s.BRV_AMONT, s.BRV_REM, s.COLOR, s.TCHNG_ALLOW, s.FREIGHT_STATUS, s.AREA_CODE, s.SILO, NVL(s.TRANSPORTER_2, s.TRANSPORTER), NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SALES_REQUEST_MASTER s
+  LOG ERRORS INTO ERR$_SALES_REQUEST_MASTER ('KHI.SALES_REQUEST_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_REQUEST_MASTER <- ISB.SALES_REQUEST_MASTER
+INSERT INTO SALES_REQUEST_MASTER
+  (SRF_NO, PRODUCT_CODE, CUSTOMER_CODE, SRF_DATE, QUANTITY, MODE_OF_DELIV, MODE_OF_TRANSP, LOCAL_EXPORT, REMARKS, POST_BY, NAME_OF_PER, CODE_NO, ADDRESS, TERM_OF_SALE, SPECIAL_INST, NO_OF_BAGS, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, SALES_TAX_TYPE, SALES_TAX_NO, REG, MOD_REC_NO, CASH_CHEQ_CD, BAG_CD, NTN, CNIC, PINO, FORM_E, LC_NO, BRV_NO, BRV_AMONT, BRV_REM, COLOR, TCHNG_ALLOW, FREIGHT_STATUS, AREA_CODE, SILO, TRANSPORTER_2, COMPC, BRNCH)
+SELECT s.SRF_NO, s.PRODUCT_CODE, s.CUSTOMER_CODE, s.SRF_DATE, s.QUANTITY, s.MODE_OF_DELIV, s.MODE_OF_TRANSP, s.LOCAL_EXPORT, s.REMARKS, s.POST_BY, s.NAME_OF_PER, s.CODE_NO, s.ADDRESS, s.TERM_OF_SALE, s.SPECIAL_INST, s.NO_OF_BAGS, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.REG, s.MOD_REC_NO, s.CASH_CHEQ_CD, NVL(s.BAGTYP, s.BAG_CD), s.NTN, s.CNIC, s.PINO, s.FORM_E, s.LC_NO, s.BRV_NO, s.BRV_AMONT, s.BRV_REM, s.COLOR, s.TCHNG_ALLOW, s.FREIGHT_STATUS, s.AREA_CODE, s.SILO, NVL(s.TRANSPORTER, s.TRANSPORTER_2), NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SALES_REQUEST_MASTER s
+  LOG ERRORS INTO ERR$_SALES_REQUEST_MASTER ('ISB.SALES_REQUEST_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_REQUEST_DETAIL <- KHI.SALES_REQUEST_DETAIL
+INSERT INTO SALES_REQUEST_DETAIL
+  (SR_NO, SRF_NO, SCH_DATE, QUANTITY, SRF_DATE, POST_BY, POST_DATE, COMPC, BRNCH)
+SELECT s.SR_NO, s.SRF_NO, s.SCH_DATE, s.QUANTITY, s.SRF_DATE, s.POST_BY, s.POST_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SALES_REQUEST_DETAIL s
+  LOG ERRORS INTO ERR$_SALES_REQUEST_DETAIL ('KHI.SALES_REQUEST_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SALES_REQUEST_DETAIL <- ISB.SALES_REQUEST_DETAIL
+INSERT INTO SALES_REQUEST_DETAIL
+  (SR_NO, SRF_NO, SCH_DATE, QUANTITY, SRF_DATE, POST_BY, POST_DATE, COMPC, BRNCH)
+SELECT s.SR_NO, s.SRF_NO, s.SCH_DATE, s.QUANTITY, s.SRF_DATE, s.POST_BY, s.POST_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SALES_REQUEST_DETAIL s
+  LOG ERRORS INTO ERR$_SALES_REQUEST_DETAIL ('ISB.SALES_REQUEST_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CONFIRM <- KHI.ORDER_CONFIRM
+INSERT INTO ORDER_CONFIRM
+  (ORDER_NO, SRF_NO, CUSTOMER_CODE, PRODUCT_CODE, ORDER_DATE, QUANTITY, RETAIL_PRICE, SALES_TAX, CONS_PRICE, EXPENSE, DISCOUNT, POST_BY, CANCEL_CODE, SR_NO, NET_BOOK_PRICE, TOT_NET, REMARKS, TMP_SRF, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, PRINT, CED, GROSS_PRICE, AREA_CODE, TRADE_DISC, ADVANCE, SECURITY, BILLING, INCENTIVE, CLEAN, BUFFER, APPROVED, NOT_APPROVED, EX_FACT_PRICE, TAX_FLAG, TAX_PERCENT, PAYMENT_RECEIVE, CREDIT_BALANCE, CREDIT_SALE, AREA_CODE_BK, BRV_TYP, BRV_REMRK, CREDIT_STATS, INCOM_TAX_STATS, SALES_TAX_STATS, INCOM_TAX_TYPE, SALES_TAX_TYPE, TBUFFER, TTRANSITORY, TADVANCE, TBANK_FLOAT, TINCENTIVE, TRANSITORY, TSECURITY, TBOUNCE, TCLEAN, TBILLING, TTAX, TSECURIRY, COMPC, BRNCH)
+SELECT s.ORDER_NO, s.SRF_NO, s.CUSTOMER_CODE, s.PRODUCT_CODE, s.ORDER_DATE, s.QUANTITY, s.RETAIL_PRICE, s.SALES_TAX, s.CONS_PRICE, s.EXPENSE, s.DISCOUNT, s.POST_BY, s.CANCEL_CODE, s.SR_NO, s.NET_BOOK_PRICE, s.TOT_NET, s.REMARKS, s.TMP_SRF, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.PRINT, s.CED, s.GROSS_PRICE, s.AREA_CODE, s.TRADE_DISC, s.ADVANCE, s.SECURITY, s.BILLING, s.INCENTIVE, s.CLEAN, s.BUFFER, s.APPROVED, s.NOT_APPROVED, s.EX_FACT_PRICE, s.TAX_FLAG, s.TAX_PERCENT, s.PAYMENT_RECEIVE, s.CREDIT_BALANCE, s.CREDIT_SALE, s.AREA_CODE_BK, s.BRV_TYP, s.BRV_REMRK, s.CREDIT_STATS, s.INCOM_TAX_STATS, s.SALES_TAX_STATS, s.INCOM_TAX_TYPE, s.SALES_TAX_TYPE, s.TBUFFER, s.TTRANSITORY, s.TADVANCE, s.TBANK_FLOAT, s.TINCENTIVE, s.TRANSITORY, s.TSECURITY, s.TBOUNCE, s.TCLEAN, s.TBILLING, s.TTAX, s.TSECURIRY, 1, 1
+  FROM &&KHI_SCH..ORDER_CONFIRM s
+  LOG ERRORS INTO ERR$_ORDER_CONFIRM ('KHI.ORDER_CONFIRM') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CONFIRM <- ISB.ORDER_CONFIRM
+INSERT INTO ORDER_CONFIRM
+  (ORDER_NO, SRF_NO, CUSTOMER_CODE, PRODUCT_CODE, ORDER_DATE, QUANTITY, RETAIL_PRICE, SALES_TAX, CONS_PRICE, EXPENSE, DISCOUNT, POST_BY, CANCEL_CODE, SR_NO, NET_BOOK_PRICE, TOT_NET, REMARKS, TMP_SRF, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, PRINT, CED, GROSS_PRICE, AREA_CODE, TRADE_DISC, ADVANCE, SECURITY, BILLING, INCENTIVE, CLEAN, BUFFER, APPROVED, NOT_APPROVED, EX_FACT_PRICE, TAX_FLAG, TAX_PERCENT, PAYMENT_RECEIVE, CREDIT_BALANCE, CREDIT_SALE, AREA_CODE_BK, BRV_TYP, BRV_REMRK, CREDIT_STATS, INCOM_TAX_STATS, SALES_TAX_STATS, INCOM_TAX_TYPE, SALES_TAX_TYPE, TBUFFER, TTRANSITORY, TADVANCE, TBANK_FLOAT, TINCENTIVE, TRANSITORY, TSECURITY, TBOUNCE, TCLEAN, TBILLING, TTAX, TSECURIRY, COMPC, BRNCH)
+SELECT s.ORDER_NO, s.SRF_NO, s.CUSTOMER_CODE, s.PRODUCT_CODE, s.ORDER_DATE, s.QUANTITY, s.RETAIL_PRICE, s.SALES_TAX, s.CONS_PRICE, s.EXPENSE, s.DISCOUNT, s.POST_BY, s.CANCEL_CODE, s.SR_NO, s.NET_BOOK_PRICE, s.TOT_NET, s.REMARKS, s.TMP_SRF, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.PRINT, s.CED, s.GROSS_PRICE, s.AREA_CODE, s.TRADE_DISC, s.ADVANCE, s.SECURITY, s.BILLING, s.INCENTIVE, s.CLEAN, s.BUFFER, s.APPROVED, s.NOT_APPROVED, s.EX_FACT_PRICE, s.TAX_FLAG, s.TAX_PERCENT, s.PAYMENT_RECEIVE, s.CREDIT_BALANCE, s.CREDIT_SALE, s.AREA_CODE_BK, s.BRV_TYP, s.BRV_REMRK, s.CREDIT_STATS, s.INCOM_TAX_STATS, s.SALES_TAX_STATS, s.INCOM_TAX_TYPE, s.SALES_TAX_TYPE, s.TBUFFER, s.TTRANSITORY, s.TADVANCE, s.TBANK_FLOAT, s.TINCENTIVE, s.TRANSITORY, s.TSECURITY, s.TBOUNCE, s.TCLEAN, s.TBILLING, s.TTAX, s.TSECURIRY, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ORDER_CONFIRM s
+  LOG ERRORS INTO ERR$_ORDER_CONFIRM ('ISB.ORDER_CONFIRM') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CONFIRM_DETAIL <- KHI.ORDER_CONFIRM_DETAIL
+INSERT INTO ORDER_CONFIRM_DETAIL
+  (SR_NO, ORDER_NO, SCH_DATE, QUANTITY, ORDER_DATE, POST_BY, SRF_NO, POST_DATE, COMPC, BRNCH)
+SELECT s.SR_NO, s.ORDER_NO, s.SCH_DATE, s.QUANTITY, s.ORDER_DATE, s.POST_BY, s.SRF_NO, s.POST_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ORDER_CONFIRM_DETAIL s
+  LOG ERRORS INTO ERR$_ORDER_CONFIRM_DETAIL ('KHI.ORDER_CONFIRM_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CONFIRM_DETAIL <- ISB.ORDER_CONFIRM_DETAIL
+INSERT INTO ORDER_CONFIRM_DETAIL
+  (SR_NO, ORDER_NO, SCH_DATE, QUANTITY, ORDER_DATE, POST_BY, SRF_NO, POST_DATE, COMPC, BRNCH)
+SELECT s.SR_NO, s.ORDER_NO, s.SCH_DATE, s.QUANTITY, s.ORDER_DATE, s.POST_BY, s.SRF_NO, s.POST_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ORDER_CONFIRM_DETAIL s
+  LOG ERRORS INTO ERR$_ORDER_CONFIRM_DETAIL ('ISB.ORDER_CONFIRM_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CASH_CHEQUE_RECEIPTS <- KHI.CASH_CHEQUE_RECEIPTS
+INSERT INTO CASH_CHEQUE_RECEIPTS
+  (RECEIPT_NO, BANK_CODE, ACCOUNT_NO, CUSTOMER_CODE, CR_DATE, CASH_CHEQ_CD, CHEQUE_NO, AMOUNT, RETURN_CD, POST_BY, REM, CAT_CODE, INST_CODE, RETURN_DATE, RECEIPT_DATE, MOD_REC_NO, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, PRINT, TAX, CHEQUE_DATE, LOCAL_OUT, SUBMIT, BANK, DEPOSIT_DATE, CLEAR_DATE, TRANSITORY, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, TAX_A, A_CHK, SALES_TAX, FREIGHT, TRANS_NAME, USRID, CHQ#, CANCEL_STATS, CANCEL_AMT, CANCEL_DT, CLEAR_DT, FUND_FROM, DEPOSIT_BANK_CODE, DEPOSITOR, DISTRIBUTOR, BANK_FLOAT, CITY, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.BANK_CODE, s.ACCOUNT_NO, s.CUSTOMER_CODE, s.CR_DATE, s.CASH_CHEQ_CD, s.CHEQUE_NO, s.AMOUNT, s.RETURN_CD, s.POST_BY, s.REM, s.CAT_CODE, s.INST_CODE, s.RETURN_DATE, s.RECEIPT_DATE, s.MOD_REC_NO, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.PRINT, s.TAX, s.CHEQUE_DATE, s.LOCAL_OUT, s.SUBMIT, s.BANK, s.DEPOSIT_DATE, s.CLEAR_DATE, s.TRANSITORY, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.TAX_A, s.A_CHK, s.SALES_TAX, s.FREIGHT, s.TRANS_NAME, s.USRID, s.CHQ#, NVL(s.CANCEL_STATS, s.STATUS), s.CANCEL_AMT, s.CANCEL_DT, s.CLEAR_DT, s.FUND_FROM, s.DEPOSIT_BANK_CODE, s.DEPOSITOR, s.DISTRIBUTOR, s.BANK_FLOAT, s.CITY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CASH_CHEQUE_RECEIPTS s
+  LOG ERRORS INTO ERR$_CASH_CHEQUE_RECEIPTS ('KHI.CASH_CHEQUE_RECEIPTS') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CASH_CHEQUE_RECEIPTS <- ISB.CASH_CHEQUE_RECEIPTS
+INSERT INTO CASH_CHEQUE_RECEIPTS
+  (RECEIPT_NO, BANK_CODE, ACCOUNT_NO, CUSTOMER_CODE, CR_DATE, CASH_CHEQ_CD, CHEQUE_NO, AMOUNT, RETURN_CD, POST_BY, REM, CAT_CODE, INST_CODE, RETURN_DATE, RECEIPT_DATE, MOD_REC_NO, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, PRINT, TAX, CHEQUE_DATE, LOCAL_OUT, SUBMIT, BANK, DEPOSIT_DATE, CLEAR_DATE, TRANSITORY, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, TAX_A, A_CHK, SALES_TAX, FREIGHT, TRANS_NAME, USRID, CHQ#, CANCEL_STATS, CANCEL_AMT, CANCEL_DT, CLEAR_DT, FUND_FROM, DEPOSIT_BANK_CODE, DEPOSITOR, DISTRIBUTOR, BANK_FLOAT, CITY, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.BANK_CODE, s.ACCOUNT_NO, s.CUSTOMER_CODE, s.CR_DATE, s.CASH_CHEQ_CD, s.CHEQUE_NO, s.AMOUNT, s.RETURN_CD, s.POST_BY, s.REM, s.CAT_CODE, s.INST_CODE, s.RETURN_DATE, s.RECEIPT_DATE, s.MOD_REC_NO, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.PRINT, s.TAX, s.CHEQUE_DATE, s.LOCAL_OUT, s.SUBMIT, s.BANK, s.DEPOSIT_DATE, s.CLEAR_DATE, s.TRANSITORY, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.TAX_A, s.A_CHK, s.SALES_TAX, s.FREIGHT, s.TRANS_NAME, s.USRID, s.CHQ#, NVL(s.STATUS, s.CANCEL_STATS), s.CANCEL_AMT, s.CANCEL_DT, s.CLEAR_DT, s.FUND_FROM, s.DEPOSIT_BANK_CODE, s.DEPOSITOR, s.DISTRIBUTOR, s.BANK_FLOAT, s.CITY, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CASH_CHEQUE_RECEIPTS s
+  LOG ERRORS INTO ERR$_CASH_CHEQUE_RECEIPTS ('ISB.CASH_CHEQUE_RECEIPTS') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CONFIRM_BRV <- KHI.ORDER_CONFIRM_BRV
+INSERT INTO ORDER_CONFIRM_BRV
+  (SERNO, ORDER_NO, RECEIPT_NO, MOD_REC_NO, CR_DATE, CASH_CHEQ_CD, AMOUNT, REM, COMPC, BRNCH)
+SELECT s.SERNO, s.ORDER_NO, s.RECEIPT_NO, s.MOD_REC_NO, s.CR_DATE, s.CASH_CHEQ_CD, s.AMOUNT, s.REM, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ORDER_CONFIRM_BRV s
+  LOG ERRORS INTO ERR$_ORDER_CONFIRM_BRV ('KHI.ORDER_CONFIRM_BRV') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BRV_DTL <- KHI.BRV_DTL
+INSERT INTO BRV_DTL
+  (DTLNO, CUSTOMER_CODE, INV_NO, INV_DATE, DC_NO, QTY, INV_AMOUNT, BRV_NO, COMPC, BRNCH)
+SELECT s.DTLNO, s.CUSTOMER_CODE, s.INV_NO, s.INV_DATE, s.DC_NO, s.QTY, s.INV_AMOUNT, s.BRV_NO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BRV_DTL s
+  LOG ERRORS INTO ERR$_BRV_DTL ('KHI.BRV_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BANK_DEPOSIT <- KHI.BANK_DEPOSIT
+INSERT INTO BANK_DEPOSIT
+  (DEPOSIT_DATE, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.DEPOSIT_DATE, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BANK_DEPOSIT s
+  LOG ERRORS INTO ERR$_BANK_DEPOSIT ('KHI.BANK_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BANK_DEPOSIT <- ISB.BANK_DEPOSIT
+INSERT INTO BANK_DEPOSIT
+  (DEPOSIT_DATE, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.DEPOSIT_DATE, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..BANK_DEPOSIT s
+  LOG ERRORS INTO ERR$_BANK_DEPOSIT ('ISB.BANK_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BANK_DEPOSIT1 <- KHI.BANK_DEPOSIT1
+INSERT INTO BANK_DEPOSIT1
+  (MOD_REC_NO, CR_DATE, CUSTOMER_CODE, CUSTOMER_NAME, LOCAL_OUT, BANK_NAME, CHEQUE_DATE, CHEQUE_NO, INST_DESC, AMOUNT, REM, BANK, COMPANY_BANK, ACCOUNT, DEPOSIT, COMPC, BRNCH)
+SELECT s.MOD_REC_NO, s.CR_DATE, s.CUSTOMER_CODE, s.CUSTOMER_NAME, s.LOCAL_OUT, s.BANK_NAME, s.CHEQUE_DATE, s.CHEQUE_NO, s.INST_DESC, s.AMOUNT, s.REM, s.BANK, s.COMPANY_BANK, s.ACCOUNT, s.DEPOSIT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BANK_DEPOSIT1 s
+  LOG ERRORS INTO ERR$_BANK_DEPOSIT1 ('KHI.BANK_DEPOSIT1') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_MST_CITY <- KHI.PERMIT_MST_CITY
+INSERT INTO PERMIT_MST_CITY
+  (PERMIT_NO, PERMIT_DATE, VALID_FROM, VALID_TO, CUSTOMER_CODE, QTY, APPROVED, YEAR, DOB, DCB, CRLMT, PRODUCT_CODE, COMPC, BRNCH)
+SELECT s.PERMIT_NO, s.PERMIT_DATE, s.VALID_FROM, s.VALID_TO, s.CUSTOMER_CODE, s.QTY, s.APPROVED, s.YEAR, s.DOB, s.DCB, s.CRLMT, s.PRODUCT_CODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PERMIT_MST_CITY s
+  LOG ERRORS INTO ERR$_PERMIT_MST_CITY ('KHI.PERMIT_MST_CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_MST_CITY <- ISB.PERMIT_MST_CITY
+INSERT INTO PERMIT_MST_CITY
+  (PERMIT_NO, PERMIT_DATE, VALID_FROM, VALID_TO, CUSTOMER_CODE, QTY, APPROVED, YEAR, DOB, DCB, CRLMT, PRODUCT_CODE, COMPC, BRNCH)
+SELECT s.PERMIT_NO, s.PERMIT_DATE, s.VALID_FROM, s.VALID_TO, s.CUSTOMER_CODE, s.QTY, s.APPROVED, s.YEAR, s.DOB, s.DCB, s.CRLMT, s.PRODUCT_CODE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PERMIT_MST_CITY s
+  LOG ERRORS INTO ERR$_PERMIT_MST_CITY ('ISB.PERMIT_MST_CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_DTL_CITY <- KHI.PERMIT_DTL_CITY
+INSERT INTO PERMIT_DTL_CITY
+  (PERMIT_NO, LNKNO, AREA_DOC, QTY, CUSTOMER_CODE, CRATE, AMOUNT, BAG, COMPC, BRNCH)
+SELECT s.PERMIT_NO, s.LNKNO, s.AREA_DOC, s.QTY, s.CUSTOMER_CODE, s.CRATE, s.AMOUNT, s.BAG, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PERMIT_DTL_CITY s
+  LOG ERRORS INTO ERR$_PERMIT_DTL_CITY ('KHI.PERMIT_DTL_CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_DTL_CITY <- ISB.PERMIT_DTL_CITY
+INSERT INTO PERMIT_DTL_CITY
+  (PERMIT_NO, LNKNO, AREA_DOC, QTY, CUSTOMER_CODE, CRATE, AMOUNT, BAG, COMPC, BRNCH)
+SELECT s.PERMIT_NO, s.LNKNO, s.AREA_DOC, s.QTY, s.CUSTOMER_CODE, s.CRATE, s.AMOUNT, s.BAG, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PERMIT_DTL_CITY s
+  LOG ERRORS INTO ERR$_PERMIT_DTL_CITY ('ISB.PERMIT_DTL_CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_ADJ_CITY <- KHI.PERMIT_ADJ_CITY
+INSERT INTO PERMIT_ADJ_CITY
+  (SERNO, WDATE, PERMIT_NO, LNKNO, AREA_DOC, QTY, CUSTOMER_CODE, CRATE, AMOUNT, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.PERMIT_NO, s.LNKNO, s.AREA_DOC, s.QTY, s.CUSTOMER_CODE, s.CRATE, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PERMIT_ADJ_CITY s
+  LOG ERRORS INTO ERR$_PERMIT_ADJ_CITY ('KHI.PERMIT_ADJ_CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_ADJ_CITY <- ISB.PERMIT_ADJ_CITY
+INSERT INTO PERMIT_ADJ_CITY
+  (SERNO, WDATE, PERMIT_NO, LNKNO, AREA_DOC, QTY, CUSTOMER_CODE, CRATE, AMOUNT, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.PERMIT_NO, s.LNKNO, s.AREA_DOC, s.QTY, s.CUSTOMER_CODE, s.CRATE, s.AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PERMIT_ADJ_CITY s
+  LOG ERRORS INTO ERR$_PERMIT_ADJ_CITY ('ISB.PERMIT_ADJ_CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_ORDER <- KHI.DELIVERY_ORDER
+INSERT INTO DELIVERY_ORDER
+  (DEL_ORDER_NO, CUSTOMER_CODE, ORDER_NO, SRF_NO, ORDER_DATE, SCHED_DATE, RE_SCHE_DATE, CANCEL_CODE, POST_BY, DO_QUANTITY, QTY_TYPE, NO_OF_BAGS, SR_NO, DO_TYPE, ENTER_BY, ENTER_DATE, POST_DATE, DISPATCHED, YEAR, CANCEL_DATE, PRINT, POST, ADJ_QTY, USRID, BARCODE, BRC, ADJ, COMPC, BRNCH)
+SELECT s.DEL_ORDER_NO, s.CUSTOMER_CODE, s.ORDER_NO, s.SRF_NO, s.ORDER_DATE, s.SCHED_DATE, s.RE_SCHE_DATE, s.CANCEL_CODE, s.POST_BY, s.DO_QUANTITY, s.QTY_TYPE, s.NO_OF_BAGS, s.SR_NO, s.DO_TYPE, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.DISPATCHED, s.YEAR, s.CANCEL_DATE, s.PRINT, s.POST, s.ADJ_QTY, s.USRID, s.BARCODE, s.BRC, s.ADJ, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DELIVERY_ORDER s
+  LOG ERRORS INTO ERR$_DELIVERY_ORDER ('KHI.DELIVERY_ORDER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_ORDER <- ISB.DELIVERY_ORDER
+INSERT INTO DELIVERY_ORDER
+  (DEL_ORDER_NO, CUSTOMER_CODE, ORDER_NO, SRF_NO, ORDER_DATE, SCHED_DATE, RE_SCHE_DATE, CANCEL_CODE, POST_BY, DO_QUANTITY, QTY_TYPE, NO_OF_BAGS, SR_NO, DO_TYPE, ENTER_BY, ENTER_DATE, POST_DATE, DISPATCHED, YEAR, CANCEL_DATE, PRINT, POST, ADJ_QTY, USRID, BARCODE, BRC, ADJ, COMPC, BRNCH)
+SELECT s.DEL_ORDER_NO, s.CUSTOMER_CODE, s.ORDER_NO, s.SRF_NO, s.ORDER_DATE, s.SCHED_DATE, s.RE_SCHE_DATE, s.CANCEL_CODE, s.POST_BY, s.DO_QUANTITY, s.QTY_TYPE, s.NO_OF_BAGS, s.SR_NO, s.DO_TYPE, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.DISPATCHED, s.YEAR, s.CANCEL_DATE, s.PRINT, s.POST, s.ADJ_QTY, s.USRID, s.BARCODE, s.BRC, s.ADJ, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DELIVERY_ORDER s
+  LOG ERRORS INTO ERR$_DELIVERY_ORDER ('ISB.DELIVERY_ORDER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DO_ADJUSTMENT <- KHI.DO_ADJUSTMENT
+INSERT INTO DO_ADJUSTMENT
+  (ADVICE_YR, ADVICE_NO, ADVICE_DT, CUSTOMER_CODE, PERIOD_FROM, PERIOD_TO, AUTHORISED_BY, AMOUNT, QUANTITY, DESIGNATION, ENTER_BY, ENTER_DATE, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, INCENTIVE, DO_NO, TRANSITORY, OC_NO, COMPC, BRNCH)
+SELECT s.ADVICE_YR, s.ADVICE_NO, s.ADVICE_DT, s.CUSTOMER_CODE, s.PERIOD_FROM, s.PERIOD_TO, s.AUTHORISED_BY, s.AMOUNT, s.QUANTITY, s.DESIGNATION, s.ENTER_BY, s.ENTER_DATE, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.INCENTIVE, s.DO_NO, s.TRANSITORY, s.OC_NO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DO_ADJUSTMENT s
+  LOG ERRORS INTO ERR$_DO_ADJUSTMENT ('KHI.DO_ADJUSTMENT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DO_ADJUSTMENT <- ISB.DO_ADJUSTMENT
+INSERT INTO DO_ADJUSTMENT
+  (ADVICE_YR, ADVICE_NO, ADVICE_DT, CUSTOMER_CODE, PERIOD_FROM, PERIOD_TO, AUTHORISED_BY, AMOUNT, QUANTITY, DESIGNATION, ENTER_BY, ENTER_DATE, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, INCENTIVE, DO_NO, TRANSITORY, OC_NO, COMPC, BRNCH)
+SELECT s.ADVICE_YR, s.ADVICE_NO, s.ADVICE_DT, s.CUSTOMER_CODE, s.PERIOD_FROM, s.PERIOD_TO, s.AUTHORISED_BY, s.AMOUNT, s.QUANTITY, s.DESIGNATION, s.ENTER_BY, s.ENTER_DATE, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.INCENTIVE, s.DO_NO, s.TRANSITORY, s.OC_NO, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DO_ADJUSTMENT s
+  LOG ERRORS INTO ERR$_DO_ADJUSTMENT ('ISB.DO_ADJUSTMENT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT FH_DELIVERY_CHALLAN <- KHI.FH_DELIVERY_CHALLAN
+INSERT INTO FH_DELIVERY_CHALLAN
+  (DC_NO, CUSTOMER_CODE, TRANSP_NAME, DEL_ORDER_NO, DC_DATE, REMARKS, TOKEN_NO, PACKING_TYPE, QUANTITY, W_TARE, CEMENT_FILLED, SPROUT_NO, WT_GROSS, QTY_VERIFIED, POST_BY, CANCEL_CODE, VEHICLE_NO, TRANSP_CODE, INVOICE_NO, INVOICE_DATE, DC_TYPE, PACK_TP, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, COUPON_FLAG, S#, B_MFG, B_CONT, BELT_NO, TIME_LOADING, PRICE_CODE, COMP_NO, OLD_BELT_NO, D_CUST_MISC_NAME, TIME, CITY_CD, CONTAINER_NO, SEAL_NO, BAGS_ID, NEW_REMARKS, CANCEL_FLAG, CANCEL_DATE, COMPC, BRNCH)
+SELECT s.DC_NO, s.CUSTOMER_CODE, s.TRANSP_NAME, s.DEL_ORDER_NO, s.DC_DATE, s.REMARKS, s.TOKEN_NO, s.PACKING_TYPE, s.QUANTITY, s.W_TARE, s.CEMENT_FILLED, s.SPROUT_NO, s.WT_GROSS, s.QTY_VERIFIED, s.POST_BY, s.CANCEL_CODE, s.VEHICLE_NO, s.TRANSP_CODE, s.INVOICE_NO, s.INVOICE_DATE, s.DC_TYPE, s.PACK_TP, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.COUPON_FLAG, s.S#, s.B_MFG, s.B_CONT, s.BELT_NO, s.TIME_LOADING, s.PRICE_CODE, s.COMP_NO, s.OLD_BELT_NO, s.D_CUST_MISC_NAME, s.TIME, s.CITY_CD, s.CONTAINER_NO, s.SEAL_NO, s.BAGS_ID, s.NEW_REMARKS, s.CANCEL_FLAG, s.CANCEL_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..FH_DELIVERY_CHALLAN s
+  LOG ERRORS INTO ERR$_FH_DELIVERY_CHALLAN ('KHI.FH_DELIVERY_CHALLAN') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_CHALLAN_OLD <- KHI.DELIVERY_CHALLAN_OLD
+INSERT INTO DELIVERY_CHALLAN_OLD
+  (DC_NO, CUSTOMER_CODE, TRANSP_NAME, DEL_ORDER_NO, DC_DATE, REMARKS, TOKEN_NO, PACKING_TYPE, QUANTITY, W_TARE, CEMENT_FILLED, SPROUT_NO, WT_GROSS, QTY_VERIFIED, POST_BY, CANCEL_CODE, VEHICLE_NO, TRANSP_CODE, INVOICE_NO, INVOICE_DATE, DC_TYPE, PACK_TP, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, COUPON_FLAG, S#, CITY_CD, BILTY, STATUS, COMPC, BRNCH)
+SELECT s.DC_NO, s.CUSTOMER_CODE, s.TRANSP_NAME, s.DEL_ORDER_NO, s.DC_DATE, s.REMARKS, s.TOKEN_NO, s.PACKING_TYPE, s.QUANTITY, s.W_TARE, s.CEMENT_FILLED, s.SPROUT_NO, s.WT_GROSS, s.QTY_VERIFIED, s.POST_BY, s.CANCEL_CODE, s.VEHICLE_NO, s.TRANSP_CODE, s.INVOICE_NO, s.INVOICE_DATE, s.DC_TYPE, s.PACK_TP, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.COUPON_FLAG, s.S#, s.CITY_CD, s.BILTY, s.STATUS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DELIVERY_CHALLAN_OLD s
+  LOG ERRORS INTO ERR$_DELIVERY_CHALLAN_OLD ('KHI.DELIVERY_CHALLAN_OLD') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_CHALLAN_OLD <- ISB.DELIVERY_CHALLAN_OLD
+INSERT INTO DELIVERY_CHALLAN_OLD
+  (DC_NO, CUSTOMER_CODE, TRANSP_NAME, DEL_ORDER_NO, DC_DATE, REMARKS, TOKEN_NO, PACKING_TYPE, QUANTITY, W_TARE, CEMENT_FILLED, SPROUT_NO, WT_GROSS, QTY_VERIFIED, POST_BY, CANCEL_CODE, VEHICLE_NO, TRANSP_CODE, INVOICE_NO, INVOICE_DATE, DC_TYPE, PACK_TP, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, COUPON_FLAG, S#, CITY_CD, BILTY, STATUS, COMPC, BRNCH)
+SELECT s.DC_NO, s.CUSTOMER_CODE, s.TRANSP_NAME, s.DEL_ORDER_NO, s.DC_DATE, s.REMARKS, s.TOKEN_NO, s.PACKING_TYPE, s.QUANTITY, s.W_TARE, s.CEMENT_FILLED, s.SPROUT_NO, s.WT_GROSS, s.QTY_VERIFIED, s.POST_BY, s.CANCEL_CODE, s.VEHICLE_NO, s.TRANSP_CODE, s.INVOICE_NO, s.INVOICE_DATE, s.DC_TYPE, s.PACK_TP, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.COUPON_FLAG, s.S#, s.CITY_CD, s.BILTY, s.STATUS, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DELIVERY_CHALLAN_OLD s
+  LOG ERRORS INTO ERR$_DELIVERY_CHALLAN_OLD ('ISB.DELIVERY_CHALLAN_OLD') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT FH_DEL_CHALLAN_DETAIL <- KHI.FH_DEL_CHALLAN_DETAIL
+INSERT INTO FH_DEL_CHALLAN_DETAIL
+  (DC_NO, DO_NO, QUANTITY, DC_TYPE, POST_BY, POST_DATE, OC_NO, VALUE, RET_CODE, COUPON_NO, COUPON_DATE, NEW_VALUE, NEW_RETAIL_PRICE, NEW_EXPENSE, NEW_DISCOUNT, NEW_CED, NEW_TRADE_DISC, NEW_TOT_NET, NEW_AREA_CODE, NEW_NET_BOOK_PRICE, NEW_CONS_PRICE, NEW_SALES_TAX, COMP_NO, CUSTOMER_CODE, PRICE_CODE, ZONE, REMARKS, CUST_MISC_ADD, CUST_MISC_NAME, TIME, DCD_SNO, MRP_SALES_TAX, MRP_COMPANY_PRICE, PACKING_TYPE, CANCEL_FLAG, CANCEL_DATE, COMPC, BRNCH)
+SELECT s.DC_NO, s.DO_NO, s.QUANTITY, s.DC_TYPE, s.POST_BY, s.POST_DATE, s.OC_NO, s.VALUE, s.RET_CODE, s.COUPON_NO, s.COUPON_DATE, s.NEW_VALUE, s.NEW_RETAIL_PRICE, s.NEW_EXPENSE, s.NEW_DISCOUNT, s.NEW_CED, s.NEW_TRADE_DISC, s.NEW_TOT_NET, s.NEW_AREA_CODE, s.NEW_NET_BOOK_PRICE, s.NEW_CONS_PRICE, s.NEW_SALES_TAX, s.COMP_NO, s.CUSTOMER_CODE, s.PRICE_CODE, s.ZONE, s.REMARKS, s.CUST_MISC_ADD, s.CUST_MISC_NAME, s.TIME, s.DCD_SNO, s.MRP_SALES_TAX, s.MRP_COMPANY_PRICE, s.PACKING_TYPE, s.CANCEL_FLAG, s.CANCEL_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..FH_DEL_CHALLAN_DETAIL s
+  LOG ERRORS INTO ERR$_FH_DEL_CHALLAN_DETAIL ('KHI.FH_DEL_CHALLAN_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DEL_CHALLAN_DETAIL_OLD <- KHI.DEL_CHALLAN_DETAIL_OLD
+INSERT INTO DEL_CHALLAN_DETAIL_OLD
+  (DC_NO, DO_NO, QUANTITY, DC_TYPE, POST_BY, POST_DATE, OC_NO, VALUE, RET_CODE, COUPON_NO, COUPON_DATE, NEW_VALUE, NEW_RETAIL_PRICE, NEW_EXPENSE, NEW_DISCOUNT, NEW_CED, NEW_TRADE_DISC, NEW_TOT_NET, NEW_AREA_CODE, NEW_NET_BOOK_PRICE, NEW_CONS_PRICE, NEW_SALES_TAX, MRP_SALES_TAX, MRP_COMPANY_PRICE, COMPC, BRNCH)
+SELECT s.DC_NO, s.DO_NO, s.QUANTITY, s.DC_TYPE, s.POST_BY, s.POST_DATE, s.OC_NO, s.VALUE, s.RET_CODE, s.COUPON_NO, s.COUPON_DATE, s.NEW_VALUE, s.NEW_RETAIL_PRICE, s.NEW_EXPENSE, s.NEW_DISCOUNT, s.NEW_CED, s.NEW_TRADE_DISC, s.NEW_TOT_NET, s.NEW_AREA_CODE, s.NEW_NET_BOOK_PRICE, s.NEW_CONS_PRICE, s.NEW_SALES_TAX, s.MRP_SALES_TAX, s.MRP_COMPANY_PRICE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DEL_CHALLAN_DETAIL_OLD s
+  LOG ERRORS INTO ERR$_DEL_CHALLAN_DETAIL_OLD ('KHI.DEL_CHALLAN_DETAIL_OLD') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DEL_CHALLAN_DETAIL_OLD <- ISB.DEL_CHALLAN_DETAIL_OLD
+INSERT INTO DEL_CHALLAN_DETAIL_OLD
+  (DC_NO, DO_NO, QUANTITY, DC_TYPE, POST_BY, POST_DATE, OC_NO, VALUE, RET_CODE, COUPON_NO, COUPON_DATE, NEW_VALUE, NEW_RETAIL_PRICE, NEW_EXPENSE, NEW_DISCOUNT, NEW_CED, NEW_TRADE_DISC, NEW_TOT_NET, NEW_AREA_CODE, NEW_NET_BOOK_PRICE, NEW_CONS_PRICE, NEW_SALES_TAX, MRP_SALES_TAX, MRP_COMPANY_PRICE, COMPC, BRNCH)
+SELECT s.DC_NO, s.DO_NO, s.QUANTITY, s.DC_TYPE, s.POST_BY, s.POST_DATE, s.OC_NO, s.VALUE, s.RET_CODE, s.COUPON_NO, s.COUPON_DATE, s.NEW_VALUE, s.NEW_RETAIL_PRICE, s.NEW_EXPENSE, s.NEW_DISCOUNT, s.NEW_CED, s.NEW_TRADE_DISC, s.NEW_TOT_NET, s.NEW_AREA_CODE, s.NEW_NET_BOOK_PRICE, s.NEW_CONS_PRICE, s.NEW_SALES_TAX, s.MRP_SALES_TAX, s.MRP_COMPANY_PRICE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DEL_CHALLAN_DETAIL_OLD s
+  LOG ERRORS INTO ERR$_DEL_CHALLAN_DETAIL_OLD ('ISB.DEL_CHALLAN_DETAIL_OLD') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT FH_DELIVERY_MEMO <- KHI.FH_DELIVERY_MEMO
+INSERT INTO FH_DELIVERY_MEMO
+  (DM_NO, DM_DATE, DOC_NO, CUSTOMER_CODE, PRODUCT_CODE, DC_TYPE, SALES_TAX_TYPE, SALES_TAX_NO, QUANTITY, RETAIL_PRICE, SALES_TAX, CONS_PRICE, EXPENSE, DISCOUNT, NET_BOOK_PRICE, TOT_NET, CED, GROSS_PRICE, AREA_CODE, TRADE_DISC, EX_FACT_PRICE, REMARKS, TOKEN_NO, PACKING_TYPE, W_TARE, CEMENT_FILLED, SPROUT_NO, WT_GROSS, QTY_VERIFIED, POST_BY, CANCEL_CODE, VEHICLE_NO, TRANSP_CODE, INVOICE_NO, INVOICE_DATE, PACK_TP, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, OLD_AREA_CODE, S#, USRID, COMP_NO, PERMIT_NO, ZONE_CODE, TERRITORY_CODE, COUPON_FLAG, B_MFG, B_CONT, BELT_NO, TIME_LOADING, PRICE_CODE, OLD_BELT_NO, D_CUST_MISC_NAME, CITY_CD, DC_NO, TRANSP_NAME, DEL_ORDER_NO, DC_DATE, STATUS, TIME, BILTY, BAGTYP, REPORTING_TIME, LNKNO, RATE_DTW, RATE_PERMIT, QTY_BAG, COMPC, BRNCH)
+SELECT s.DM_NO, s.DM_DATE, s.DOC_NO, s.CUSTOMER_CODE, s.PRODUCT_CODE, s.DC_TYPE, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.QUANTITY, s.RETAIL_PRICE, s.SALES_TAX, s.CONS_PRICE, s.EXPENSE, s.DISCOUNT, s.NET_BOOK_PRICE, s.TOT_NET, s.CED, s.GROSS_PRICE, s.AREA_CODE, s.TRADE_DISC, s.EX_FACT_PRICE, s.REMARKS, s.TOKEN_NO, s.PACKING_TYPE, s.W_TARE, s.CEMENT_FILLED, s.SPROUT_NO, s.WT_GROSS, s.QTY_VERIFIED, s.POST_BY, s.CANCEL_CODE, s.VEHICLE_NO, s.TRANSP_CODE, s.INVOICE_NO, s.INVOICE_DATE, s.PACK_TP, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.OLD_AREA_CODE, s.S#, s.USRID, s.COMP_NO, s.PERMIT_NO, s.ZONE_CODE, s.TERRITORY_CODE, s.COUPON_FLAG, s.B_MFG, s.B_CONT, s.BELT_NO, s.TIME_LOADING, s.PRICE_CODE, s.OLD_BELT_NO, s.D_CUST_MISC_NAME, s.CITY_CD, s.DC_NO, s.TRANSP_NAME, s.DEL_ORDER_NO, s.DC_DATE, s.STATUS, s.TIME, s.BILTY, s.BAGTYP, s.REPORTING_TIME, s.LNKNO, s.RATE_DTW, s.RATE_PERMIT, s.QTY_BAG, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..FH_DELIVERY_MEMO s
+  LOG ERRORS INTO ERR$_FH_DELIVERY_MEMO ('KHI.FH_DELIVERY_MEMO') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DELIVERY_MEMO_OLD <- ISB.DELIVERY_MEMO_OLD
+INSERT INTO DELIVERY_MEMO_OLD
+  (DM_NO, DM_DATE, DOC_NO, CUSTOMER_CODE, PRODUCT_CODE, DC_TYPE, SALES_TAX_TYPE, SALES_TAX_NO, QUANTITY, RETAIL_PRICE, SALES_TAX, CONS_PRICE, EXPENSE, DISCOUNT, NET_BOOK_PRICE, TOT_NET, CED, GROSS_PRICE, AREA_CODE, TRADE_DISC, EX_FACT_PRICE, REMARKS, TOKEN_NO, PACKING_TYPE, W_TARE, CEMENT_FILLED, SPROUT_NO, WT_GROSS, QTY_VERIFIED, POST_BY, CANCEL_CODE, VEHICLE_NO, TRANSP_CODE, INVOICE_NO, INVOICE_DATE, PACK_TP, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, OLD_AREA_CODE, S#, PERMIT_NO, COMPC, BRNCH)
+SELECT s.DM_NO, s.DM_DATE, s.DOC_NO, s.CUSTOMER_CODE, s.PRODUCT_CODE, s.DC_TYPE, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.QUANTITY, s.RETAIL_PRICE, s.SALES_TAX, s.CONS_PRICE, s.EXPENSE, s.DISCOUNT, s.NET_BOOK_PRICE, s.TOT_NET, s.CED, s.GROSS_PRICE, s.AREA_CODE, s.TRADE_DISC, s.EX_FACT_PRICE, s.REMARKS, s.TOKEN_NO, s.PACKING_TYPE, s.W_TARE, s.CEMENT_FILLED, s.SPROUT_NO, s.WT_GROSS, s.QTY_VERIFIED, s.POST_BY, s.CANCEL_CODE, s.VEHICLE_NO, s.TRANSP_CODE, s.INVOICE_NO, s.INVOICE_DATE, s.PACK_TP, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.OLD_AREA_CODE, s.S#, s.PERMIT_NO, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DELIVERY_MEMO_OLD s
+  LOG ERRORS INTO ERR$_DELIVERY_MEMO_OLD ('ISB.DELIVERY_MEMO_OLD') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT FH_DC_DOCUMENT <- KHI.FH_DC_DOCUMENT
+INSERT INTO FH_DC_DOCUMENT
+  (COMP_NO, COMP_DT, DT_SR#, TOKEN_TYPE, TOKEN_NO, TRUCK_NO, GROSS_WT, TARE_WT, TARE_TIME, GROSS_TIME, TARE_SHIFT, GROSS_SHIFT, REPORTING_TIME, MDC_DATE, REMARKS, VEHICLE_TYPE, TIME, MGATE_FLG, OP, TRANSPORTER_ID, OUT_GATE, COMPC, BRNCH)
+SELECT s.COMP_NO, s.COMP_DT, s.DT_SR#, s.TOKEN_TYPE, s.TOKEN_NO, s.TRUCK_NO, s.GROSS_WT, s.TARE_WT, s.TARE_TIME, s.GROSS_TIME, s.TARE_SHIFT, s.GROSS_SHIFT, s.REPORTING_TIME, s.MDC_DATE, s.REMARKS, s.VEHICLE_TYPE, s.TIME, s.MGATE_FLG, s.OP, s.TRANSPORTER_ID, s.OUT_GATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..FH_DC_DOCUMENT s
+  LOG ERRORS INTO ERR$_FH_DC_DOCUMENT ('KHI.FH_DC_DOCUMENT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_NOTE <- KHI.CREDIT_NOTE
+INSERT INTO CREDIT_NOTE
+  (SRL_NO, DB_CR_DATE, CUSTOMER_CODE, DB_CR_CD, NOTE_TYPE, AMOUNT, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, REMARKS, POST, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, INCENTIVE, BANK_CHARGES, WITHHOLDING_TAX, NET_AMOUNT, DO_CODE, CITY_CD, SD_TYPE, BANK_CODE, AREA_CD, DIST_CD, TRANSITORY, COLLECTION_INCENTIVE_AMOUNT, DEAL_INCENTIVE_QUANTITY, TARGET_QUANTITY, COMPC, BRNCH)
+SELECT s.SRL_NO, s.DB_CR_DATE, s.CUSTOMER_CODE, s.DB_CR_CD, s.NOTE_TYPE, s.AMOUNT, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.REMARKS, s.POST, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.INCENTIVE, s.BANK_CHARGES, s.WITHHOLDING_TAX, s.NET_AMOUNT, s.DO_CODE, s.CITY_CD, s.SD_TYPE, s.BANK_CODE, s.AREA_CD, s.DIST_CD, s.TRANSITORY, s.COLLECTION_INCENTIVE_AMOUNT, s.DEAL_INCENTIVE_QUANTITY, s.TARGET_QUANTITY, 1, 1
+  FROM &&KHI_SCH..CREDIT_NOTE s
+  LOG ERRORS INTO ERR$_CREDIT_NOTE ('KHI.CREDIT_NOTE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_NOTE <- ISB.CREDIT_NOTE
+INSERT INTO CREDIT_NOTE
+  (SRL_NO, DB_CR_DATE, CUSTOMER_CODE, DB_CR_CD, NOTE_TYPE, AMOUNT, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, REMARKS, POST, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, INCENTIVE, BANK_CHARGES, WITHHOLDING_TAX, NET_AMOUNT, DO_CODE, CITY_CD, SD_TYPE, BANK_CODE, AREA_CD, DIST_CD, TRANSITORY, COMPC, BRNCH)
+SELECT s.SRL_NO, s.DB_CR_DATE, s.CUSTOMER_CODE, s.DB_CR_CD, s.NOTE_TYPE, s.AMOUNT, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.REMARKS, s.POST, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.INCENTIVE, s.BANK_CHARGES, s.WITHHOLDING_TAX, s.NET_AMOUNT, s.DO_CODE, s.CITY_CD, s.SD_TYPE, s.BANK_CODE, s.AREA_CD, s.DIST_CD, s.TRANSITORY, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_NOTE s
+  LOG ERRORS INTO ERR$_CREDIT_NOTE ('ISB.CREDIT_NOTE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_NOTE_DETAIL <- KHI.CREDIT_NOTE_DETAIL
+INSERT INTO CREDIT_NOTE_DETAIL
+  (SRL_NO, SR_NO, PARTICULAR, AMOUNT, DB_CR_CD, NOTE_TYPE, FLAG, WHT_PERC, NO, COMPC, BRNCH)
+SELECT s.SRL_NO, s.SR_NO, s.PARTICULAR, s.AMOUNT, s.DB_CR_CD, s.NOTE_TYPE, s.FLAG, s.WHT_PERC, s.NO, 1, 1
+  FROM &&KHI_SCH..CREDIT_NOTE_DETAIL s
+  LOG ERRORS INTO ERR$_CREDIT_NOTE_DETAIL ('KHI.CREDIT_NOTE_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_NOTE_DETAIL <- ISB.CREDIT_NOTE_DETAIL
+INSERT INTO CREDIT_NOTE_DETAIL
+  (SRL_NO, SR_NO, PARTICULAR, AMOUNT, DB_CR_CD, NOTE_TYPE, FLAG, WHT_PERC, NO, COMPC, BRNCH)
+SELECT s.SRL_NO, s.SR_NO, s.PARTICULAR, s.AMOUNT, s.DB_CR_CD, s.NOTE_TYPE, s.FLAG, s.WHT_PERC, s.NO, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CREDIT_NOTE_DETAIL s
+  LOG ERRORS INTO ERR$_CREDIT_NOTE_DETAIL ('ISB.CREDIT_NOTE_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CANCEL_MASTER <- KHI.ORDER_CANCEL_MASTER
+INSERT INTO ORDER_CANCEL_MASTER
+  (OC_ADVISE_NO, OC_ADVISE_DATE, CUSTOMER_CODE, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, YEAR, POST, AMOUNT, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, INCENTIVE, TRANSITORY, COMPC, BRNCH)
+SELECT s.OC_ADVISE_NO, s.OC_ADVISE_DATE, s.CUSTOMER_CODE, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.YEAR, s.POST, s.AMOUNT, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.INCENTIVE, s.TRANSITORY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ORDER_CANCEL_MASTER s
+  LOG ERRORS INTO ERR$_ORDER_CANCEL_MASTER ('KHI.ORDER_CANCEL_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CANCEL_MASTER <- ISB.ORDER_CANCEL_MASTER
+INSERT INTO ORDER_CANCEL_MASTER
+  (OC_ADVISE_NO, OC_ADVISE_DATE, CUSTOMER_CODE, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, YEAR, POST, AMOUNT, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, INCENTIVE, TRANSITORY, COMPC, BRNCH)
+SELECT s.OC_ADVISE_NO, s.OC_ADVISE_DATE, s.CUSTOMER_CODE, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.YEAR, s.POST, s.AMOUNT, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.INCENTIVE, s.TRANSITORY, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ORDER_CANCEL_MASTER s
+  LOG ERRORS INTO ERR$_ORDER_CANCEL_MASTER ('ISB.ORDER_CANCEL_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CANCEL_DETAIL <- KHI.ORDER_CANCEL_DETAIL
+INSERT INTO ORDER_CANCEL_DETAIL
+  (OC_ADVISE_NO, SR_NO, DO_NO, PRODUCT_CODE, DATE_OF_ISSUE, QUANTITY, DO_DATE, OC_NO, OC_DATE, POST_BY, DOC_TYPE, POST_DATE, AMOUNT, COMPC, BRNCH)
+SELECT s.OC_ADVISE_NO, s.SR_NO, s.DO_NO, s.PRODUCT_CODE, s.DATE_OF_ISSUE, s.QUANTITY, s.DO_DATE, s.OC_NO, s.OC_DATE, s.POST_BY, s.DOC_TYPE, s.POST_DATE, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ORDER_CANCEL_DETAIL s
+  LOG ERRORS INTO ERR$_ORDER_CANCEL_DETAIL ('KHI.ORDER_CANCEL_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CANCEL_DETAIL <- ISB.ORDER_CANCEL_DETAIL
+INSERT INTO ORDER_CANCEL_DETAIL
+  (OC_ADVISE_NO, SR_NO, DO_NO, PRODUCT_CODE, DATE_OF_ISSUE, QUANTITY, DO_DATE, OC_NO, OC_DATE, POST_BY, DOC_TYPE, POST_DATE, AMOUNT, COMPC, BRNCH)
+SELECT s.OC_ADVISE_NO, s.SR_NO, s.DO_NO, s.PRODUCT_CODE, s.DATE_OF_ISSUE, s.QUANTITY, s.DO_DATE, s.OC_NO, s.OC_DATE, s.POST_BY, s.DOC_TYPE, s.POST_DATE, s.AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ORDER_CANCEL_DETAIL s
+  LOG ERRORS INTO ERR$_ORDER_CANCEL_DETAIL ('ISB.ORDER_CANCEL_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SD_OCA_MST <- KHI.SD_OCA_MST
+INSERT INTO SD_OCA_MST
+  (SERNO, WDATE, CUSTM, EDATE, USRID, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.CUSTM, s.EDATE, s.USRID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SD_OCA_MST s
+  LOG ERRORS INTO ERR$_SD_OCA_MST ('KHI.SD_OCA_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SD_OCA_DTL <- KHI.SD_OCA_DTL
+INSERT INTO SD_OCA_DTL
+  (SERNO, LNKNO, DO_NO, QTY, DO_DATE, OC_NUMBER, DO_TYPE, PROD, COMPC, BRNCH)
+SELECT s.SERNO, s.LNKNO, s.DO_NO, s.QTY, s.DO_DATE, s.OC_NUMBER, s.DO_TYPE, s.PROD, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SD_OCA_DTL s
+  LOG ERRORS INTO ERR$_SD_OCA_DTL ('KHI.SD_OCA_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RECEIPT_CANCEL_MASTER <- KHI.RECEIPT_CANCEL_MASTER
+INSERT INTO RECEIPT_CANCEL_MASTER
+  (CANCEL_NO, MEMO_NO, MEMO_DATE, CUSTOMER_CODE, CASH_CHEQ_CD, CANCEL_TYPE, RETURN_CHARGES, AMOUNT, REMARKS, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, POST, COMPC, BRNCH)
+SELECT s.CANCEL_NO, s.MEMO_NO, s.MEMO_DATE, s.CUSTOMER_CODE, s.CASH_CHEQ_CD, s.CANCEL_TYPE, s.RETURN_CHARGES, s.AMOUNT, s.REMARKS, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.POST, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RECEIPT_CANCEL_MASTER s
+  LOG ERRORS INTO ERR$_RECEIPT_CANCEL_MASTER ('KHI.RECEIPT_CANCEL_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RECEIPT_CANCEL_MASTER <- ISB.RECEIPT_CANCEL_MASTER
+INSERT INTO RECEIPT_CANCEL_MASTER
+  (CANCEL_NO, MEMO_NO, MEMO_DATE, CUSTOMER_CODE, CASH_CHEQ_CD, CANCEL_TYPE, RETURN_CHARGES, AMOUNT, REMARKS, ENTER_BY, ENTER_DATE, POST_BY, POST_DATE, POST, COMPC, BRNCH)
+SELECT s.CANCEL_NO, s.MEMO_NO, s.MEMO_DATE, s.CUSTOMER_CODE, s.CASH_CHEQ_CD, s.CANCEL_TYPE, s.RETURN_CHARGES, s.AMOUNT, s.REMARKS, s.ENTER_BY, s.ENTER_DATE, s.POST_BY, s.POST_DATE, s.POST, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..RECEIPT_CANCEL_MASTER s
+  LOG ERRORS INTO ERR$_RECEIPT_CANCEL_MASTER ('ISB.RECEIPT_CANCEL_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RECEIPT_CANCEL_DETAIL <- KHI.RECEIPT_CANCEL_DETAIL
+INSERT INTO RECEIPT_CANCEL_DETAIL
+  (CANCEL_NO, CASH_CHEQ_CD, SRL_NO, RECEIPT_NO, RECEIPT_SRL, AMOUNT, COMPC, BRNCH)
+SELECT s.CANCEL_NO, s.CASH_CHEQ_CD, s.SRL_NO, s.RECEIPT_NO, s.RECEIPT_SRL, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RECEIPT_CANCEL_DETAIL s
+  LOG ERRORS INTO ERR$_RECEIPT_CANCEL_DETAIL ('KHI.RECEIPT_CANCEL_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RECEIPT_CANCEL_DETAIL <- ISB.RECEIPT_CANCEL_DETAIL
+INSERT INTO RECEIPT_CANCEL_DETAIL
+  (CANCEL_NO, CASH_CHEQ_CD, SRL_NO, RECEIPT_NO, RECEIPT_SRL, AMOUNT, COMPC, BRNCH)
+SELECT s.CANCEL_NO, s.CASH_CHEQ_CD, s.SRL_NO, s.RECEIPT_NO, s.RECEIPT_SRL, s.AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..RECEIPT_CANCEL_DETAIL s
+  LOG ERRORS INTO ERR$_RECEIPT_CANCEL_DETAIL ('ISB.RECEIPT_CANCEL_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BRV_CANCEL_DTL <- KHI.BRV_CANCEL_DTL
+INSERT INTO BRV_CANCEL_DTL
+  (RECEIPT_NO, BANK_CODE, ACCOUNT_NO, CUSTOMER_CODE, CR_DATE, CASH_CHEQ_CD, CHEQUE_NO, AMOUNT, RETURN_CD, POST_BY, REM, CAT_CODE, INST_CODE, RETURN_DATE, RECEIPT_DATE, MOD_REC_NO, ENTER_BY, ENTER_DATE, POST_DATE, YEAR, POST, PRINT, TAX, CHEQUE_DATE, LOCAL_OUT, SUBMIT, BANK, DEPOSIT_DATE, CLEAR_DATE, TRANSITORY, BUFFER, CLEAN, SECURITY, ADVANCE, BILLING, TAX_A, A_CHK, SALES_TAX, FREIGHT, TRANS_NAME, USRID, CHQ#, CANCEL_STATS, CANCEL_AMT, CANCEL_DT, CLEAR_DT, STATUS, FUND_FROM, DEPOSIT_BANK_CODE, DEPOSITOR, DISTRIBUTOR, BANK_FLOAT, CITY, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.BANK_CODE, s.ACCOUNT_NO, s.CUSTOMER_CODE, s.CR_DATE, s.CASH_CHEQ_CD, s.CHEQUE_NO, s.AMOUNT, s.RETURN_CD, s.POST_BY, s.REM, s.CAT_CODE, s.INST_CODE, s.RETURN_DATE, s.RECEIPT_DATE, s.MOD_REC_NO, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.YEAR, s.POST, s.PRINT, s.TAX, s.CHEQUE_DATE, s.LOCAL_OUT, s.SUBMIT, s.BANK, s.DEPOSIT_DATE, s.CLEAR_DATE, s.TRANSITORY, s.BUFFER, s.CLEAN, s.SECURITY, s.ADVANCE, s.BILLING, s.TAX_A, s.A_CHK, s.SALES_TAX, s.FREIGHT, s.TRANS_NAME, s.USRID, s.CHQ#, s.CANCEL_STATS, s.CANCEL_AMT, s.CANCEL_DT, s.CLEAR_DT, s.STATUS, s.FUND_FROM, s.DEPOSIT_BANK_CODE, s.DEPOSITOR, s.DISTRIBUTOR, s.BANK_FLOAT, s.CITY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BRV_CANCEL_DTL s
+  LOG ERRORS INTO ERR$_BRV_CANCEL_DTL ('KHI.BRV_CANCEL_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT OPENING_BALANCES <- KHI.OPENING_BALANCES
+INSERT INTO OPENING_BALANCES
+  (CUSTOMER_CODE, OPEN_DATE, CARD_BAL, DO_BAL, LEDGER_BAL, CLOSE_BY, CLOSE_DATE, YEAR, CLEAN, TRANSITORY, BILLING, ADVANCE, SECURITY, INCENTIVE, TAX, BOUNCE, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.OPEN_DATE, s.CARD_BAL, s.DO_BAL, s.LEDGER_BAL, s.CLOSE_BY, s.CLOSE_DATE, s.YEAR, s.CLEAN, s.TRANSITORY, s.BILLING, s.ADVANCE, s.SECURITY, s.INCENTIVE, s.TAX, s.BOUNCE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..OPENING_BALANCES s
+  LOG ERRORS INTO ERR$_OPENING_BALANCES ('KHI.OPENING_BALANCES') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT OPENING_BALANCES <- ISB.OPENING_BALANCES
+INSERT INTO OPENING_BALANCES
+  (CUSTOMER_CODE, OPEN_DATE, CARD_BAL, DO_BAL, LEDGER_BAL, CLOSE_BY, CLOSE_DATE, YEAR, CLEAN, TRANSITORY, BILLING, ADVANCE, SECURITY, INCENTIVE, TAX, BOUNCE, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.OPEN_DATE, s.CARD_BAL, s.DO_BAL, s.LEDGER_BAL, s.CLOSE_BY, s.CLOSE_DATE, s.YEAR, s.CLEAN, s.TRANSITORY, s.BILLING, s.ADVANCE, s.SECURITY, s.INCENTIVE, s.TAX, s.BOUNCE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..OPENING_BALANCES s
+  LOG ERRORS INTO ERR$_OPENING_BALANCES ('ISB.OPENING_BALANCES') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_OPEN_BALANCE <- KHI.CUSTOMER_OPEN_BALANCE
+INSERT INTO CUSTOMER_OPEN_BALANCE
+  (CUSTOMER_CODE, OPEN_DATE, DEBIT_AMOUNT, CREDIT_AMOUNT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.OPEN_DATE, s.DEBIT_AMOUNT, s.CREDIT_AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMER_OPEN_BALANCE s
+  LOG ERRORS INTO ERR$_CUSTOMER_OPEN_BALANCE ('KHI.CUSTOMER_OPEN_BALANCE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMER_OPEN_BALANCE <- ISB.CUSTOMER_OPEN_BALANCE
+INSERT INTO CUSTOMER_OPEN_BALANCE
+  (CUSTOMER_CODE, OPEN_DATE, DEBIT_AMOUNT, CREDIT_AMOUNT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.OPEN_DATE, s.DEBIT_AMOUNT, s.CREDIT_AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..CUSTOMER_OPEN_BALANCE s
+  LOG ERRORS INTO ERR$_CUSTOMER_OPEN_BALANCE ('ISB.CUSTOMER_OPEN_BALANCE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_ADJ_1 <- KHI.DC_ADJ_1
+INSERT INTO DC_ADJ_1
+  (SERNO, CUSTM, WDATE, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTM, s.WDATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DC_ADJ_1 s
+  LOG ERRORS INTO ERR$_DC_ADJ_1 ('KHI.DC_ADJ_1') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_ADJ_2 <- KHI.DC_ADJ_2
+INSERT INTO DC_ADJ_2
+  (DOCNO, SERNO, CUSTM, DOC_DATE, SLR, DOC_TYPE, DOC_NO, NARRATION, DR, CR, COMPC, BRNCH)
+SELECT s.DOCNO, s.SERNO, s.CUSTM, s.DOC_DATE, s.SLR, s.DOC_TYPE, s.DOC_NO, s.NARRATION, s.DR, s.CR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DC_ADJ_2 s
+  LOG ERRORS INTO ERR$_DC_ADJ_2 ('KHI.DC_ADJ_2') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_LADGER_ADJ <- KHI.DC_LADGER_ADJ
+INSERT INTO DC_LADGER_ADJ
+  (NOK#, CUSTM, DOC_DATE, SLR, DOC_TYPE, DOC_NO, NARRATION, DR, CR, COMPC, BRNCH)
+SELECT s.NOK#, s.CUSTM, s.DOC_DATE, s.SLR, s.DOC_TYPE, s.DOC_NO, s.NARRATION, s.DR, s.CR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DC_LADGER_ADJ s
+  LOG ERRORS INTO ERR$_DC_LADGER_ADJ ('KHI.DC_LADGER_ADJ') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TAX <- KHI.TAX
+INSERT INTO TAX
+  (SRL_NO, TAX_DATE, CUSTOMER_CODE, AMOUNT, REMARKS, DISABLE, ENTER_BY, ENTER_DATE, POST, POST_BY, POST_DATE, TAX_TYPE, TR_TYPE, COMPC, BRNCH)
+SELECT s.SRL_NO, s.TAX_DATE, s.CUSTOMER_CODE, s.AMOUNT, s.REMARKS, s.DISABLE, s.ENTER_BY, s.ENTER_DATE, s.POST, s.POST_BY, s.POST_DATE, s.TAX_TYPE, s.TR_TYPE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TAX s
+  LOG ERRORS INTO ERR$_TAX ('KHI.TAX') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TAX <- ISB.TAX
+INSERT INTO TAX
+  (SRL_NO, TAX_DATE, CUSTOMER_CODE, AMOUNT, REMARKS, DISABLE, ENTER_BY, ENTER_DATE, POST, POST_BY, POST_DATE, TAX_TYPE, TR_TYPE, COMPC, BRNCH)
+SELECT s.SRL_NO, s.TAX_DATE, s.CUSTOMER_CODE, s.AMOUNT, s.REMARKS, s.DISABLE, s.ENTER_BY, s.ENTER_DATE, s.POST, s.POST_BY, s.POST_DATE, s.TAX_TYPE, s.TR_TYPE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TAX s
+  LOG ERRORS INTO ERR$_TAX ('ISB.TAX') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TAX_DETAIL <- KHI.TAX_DETAIL
+INSERT INTO TAX_DETAIL
+  (SRL_NO, RECEIPT_TYPE, RECEIPT_NO, AMOUNT, COMPC, BRNCH)
+SELECT s.SRL_NO, s.RECEIPT_TYPE, s.RECEIPT_NO, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TAX_DETAIL s
+  LOG ERRORS INTO ERR$_TAX_DETAIL ('KHI.TAX_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TAX_DETAIL <- ISB.TAX_DETAIL
+INSERT INTO TAX_DETAIL
+  (SRL_NO, RECEIPT_TYPE, RECEIPT_NO, AMOUNT, COMPC, BRNCH)
+SELECT s.SRL_NO, s.RECEIPT_TYPE, s.RECEIPT_NO, s.AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TAX_DETAIL s
+  LOG ERRORS INTO ERR$_TAX_DETAIL ('ISB.TAX_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TAX_CERTIFICATE <- KHI.TAX_CERTIFICATE
+INSERT INTO TAX_CERTIFICATE
+  (SERNO, FYEAR, CUST_ID, COMPC, BRNCH)
+SELECT s.SERNO, s.FYEAR, s.CUST_ID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TAX_CERTIFICATE s
+  LOG ERRORS INTO ERR$_TAX_CERTIFICATE ('KHI.TAX_CERTIFICATE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TAX_CERTIFICATE_DTL <- KHI.TAX_CERTIFICATE_DTL
+INSERT INTO TAX_CERTIFICATE_DTL
+  (SERNO, LNKNO, MNTH, TAXABLE, INCOM_TAX, CHALLAN_NO, CDATE, COMPC, BRNCH)
+SELECT s.SERNO, s.LNKNO, s.MNTH, s.TAXABLE, s.INCOM_TAX, s.CHALLAN_NO, s.CDATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..TAX_CERTIFICATE_DTL s
+  LOG ERRORS INTO ERR$_TAX_CERTIFICATE_DTL ('KHI.TAX_CERTIFICATE_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT VOCH_POST <- KHI.VOCH_POST
+INSERT INTO VOCH_POST
+  (REF_NO, REF_TYPE, V_NO, V_DATE, V_TYPE, UNIT_ID, LOC_CD, USR_ID, REF_DATE, COMPC, BRNCH)
+SELECT s.REF_NO, s.REF_TYPE, s.V_NO, s.V_DATE, s.V_TYPE, s.UNIT_ID, s.LOC_CD, s.USR_ID, s.REF_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..VOCH_POST s
+  LOG ERRORS INTO ERR$_VOCH_POST ('KHI.VOCH_POST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT VOCH_DTL <- KHI.VOCH_DTL
+INSERT INTO VOCH_DTL
+  (ACC_CODE, VD_PART, VD_DR_CR, DR_AMOUNT, CR_AMOUNT, UNIT_ID, LOC_CD, VD_VTYPE, VD_VDATE, VD_CHQ#, REF_TYPE, SEQ_U, COMPC, BRNCH)
+SELECT s.ACC_CODE, s.VD_PART, s.VD_DR_CR, s.DR_AMOUNT, s.CR_AMOUNT, s.UNIT_ID, s.LOC_CD, s.VD_VTYPE, s.VD_VDATE, s.VD_CHQ#, s.REF_TYPE, s.SEQ_U, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..VOCH_DTL s
+  LOG ERRORS INTO ERR$_VOCH_DTL ('KHI.VOCH_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERNAME <- KHI.SEC_USERNAME
+INSERT INTO SEC_USERNAME
+  (UNIT_ID, USRID, DESCR, ULEVL, DESIG, PASWD, PDATE, LOCKL, CONTR, STATS, FTIME, TTIME, SCREN, PLIFE, EXPDT, DCODE, WEBLG, LOC_ID, ORG_ID, DEPT_ID, MOBILE, COMPC, BRNCH)
+SELECT s.UNIT_ID, s.USRID, s.DESCR, s.ULEVL, s.DESIG, s.PASWD, s.PDATE, s.LOCKL, s.CONTR, s.STATS, s.FTIME, s.TTIME, s.SCREN, s.PLIFE, s.EXPDT, s.DCODE, s.WEBLG, s.LOC_ID, s.ORG_ID, s.DEPT_ID, s.MOBILE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_USERNAME s
+  LOG ERRORS INTO ERR$_SEC_USERNAME ('KHI.SEC_USERNAME') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERNAME <- ISB.SEC_USERNAME
+INSERT INTO SEC_USERNAME
+  (UNIT_ID, USRID, DESCR, ULEVL, DESIG, PASWD, PDATE, LOCKL, CONTR, STATS, FTIME, TTIME, SCREN, PLIFE, EXPDT, DCODE, WEBLG, LOC_ID, ORG_ID, DEPT_ID, MOBILE, COMPC, BRNCH)
+SELECT s.UNIT_ID, s.USRID, s.DESCR, s.ULEVL, s.DESIG, s.PASWD, s.PDATE, s.LOCKL, s.CONTR, s.STATS, s.FTIME, s.TTIME, s.SCREN, s.PLIFE, s.EXPDT, s.DCODE, s.WEBLG, s.LOC_ID, s.ORG_ID, s.DEPT_ID, s.MOBILE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_USERNAME s
+  LOG ERRORS INTO ERR$_SEC_USERNAME ('ISB.SEC_USERNAME') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERCMPN <- KHI.SEC_USERCMPN
+INSERT INTO SEC_USERCMPN
+  (USRID, UNIT_ID, COMPC, BRNCH)
+SELECT s.USRID, s.UNIT_ID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_USERCMPN s
+  LOG ERRORS INTO ERR$_SEC_USERCMPN ('KHI.SEC_USERCMPN') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERCMPN <- ISB.SEC_USERCMPN
+INSERT INTO SEC_USERCMPN
+  (USRID, UNIT_ID, COMPC, BRNCH)
+SELECT s.USRID, s.UNIT_ID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_USERCMPN s
+  LOG ERRORS INTO ERR$_SEC_USERCMPN ('ISB.SEC_USERCMPN') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_MODULE_S <- KHI.SEC_MODULE_S
+INSERT INTO SEC_MODULE_S
+  (SYSTM, MODUL, EXTNS, DESCR, WDATE, INSRT, QUERY, UPDAT, DELET, PRINT, AUTHR, VERSN, STATS, USRID, COMPC, BRNCH)
+SELECT s.SYSTM, s.MODUL, s.EXTNS, s.DESCR, s.WDATE, s.INSRT, s.QUERY, s.UPDAT, s.DELET, s.PRINT, s.AUTHR, s.VERSN, s.STATS, s.USRID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_MODULE_S s
+  LOG ERRORS INTO ERR$_SEC_MODULE_S ('KHI.SEC_MODULE_S') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_MODULE_S <- ISB.SEC_MODULE_S
+INSERT INTO SEC_MODULE_S
+  (SYSTM, MODUL, EXTNS, DESCR, WDATE, INSRT, QUERY, UPDAT, DELET, PRINT, AUTHR, VERSN, STATS, USRID, COMPC, BRNCH)
+SELECT s.SYSTM, s.MODUL, s.EXTNS, s.DESCR, s.WDATE, s.INSRT, s.QUERY, s.UPDAT, s.DELET, s.PRINT, s.AUTHR, s.VERSN, s.STATS, s.USRID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_MODULE_S s
+  LOG ERRORS INTO ERR$_SEC_MODULE_S ('ISB.SEC_MODULE_S') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_MAINMENU <- KHI.SEC_MAINMENU
+INSERT INTO SEC_MAINMENU
+  (SERNO, DESCR, RIGHT, DTYPE, MODNM, PARNO, DETDS, PAR01, PAR02, USRID, COMPC, BRNCH)
+SELECT s.SERNO, s.DESCR, s.RIGHT, s.DTYPE, s.MODNM, s.PARNO, s.DETDS, s.PAR01, s.PAR02, s.USRID, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_MAINMENU s
+  LOG ERRORS INTO ERR$_SEC_MAINMENU ('KHI.SEC_MAINMENU') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_MAINMENU <- ISB.SEC_MAINMENU
+INSERT INTO SEC_MAINMENU
+  (SERNO, DESCR, RIGHT, DTYPE, MODNM, PARNO, DETDS, PAR01, PAR02, USRID, COMPC, BRNCH)
+SELECT s.SERNO, s.DESCR, s.RIGHT, s.DTYPE, s.MODNM, s.PARNO, s.DETDS, s.PAR01, s.PAR02, s.USRID, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_MAINMENU s
+  LOG ERRORS INTO ERR$_SEC_MAINMENU ('ISB.SEC_MAINMENU') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERPERM <- KHI.SEC_USERPERM
+INSERT INTO SEC_USERPERM
+  (UNIT_ID, USRID, SYSTM, MODUL, EXTNS, PDATE, INSRT, QUERY, UPDAT, DELET, PRINT, STATS, PAR01, PAR02, COMPC, BRNCH)
+SELECT s.UNIT_ID, s.USRID, s.SYSTM, s.MODUL, s.EXTNS, s.PDATE, s.INSRT, s.QUERY, s.UPDAT, s.DELET, s.PRINT, s.STATS, s.PAR01, s.PAR02, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_USERPERM s
+  LOG ERRORS INTO ERR$_SEC_USERPERM ('KHI.SEC_USERPERM') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERPERM <- ISB.SEC_USERPERM
+INSERT INTO SEC_USERPERM
+  (UNIT_ID, USRID, SYSTM, MODUL, EXTNS, PDATE, INSRT, QUERY, UPDAT, DELET, PRINT, STATS, PAR01, PAR02, COMPC, BRNCH)
+SELECT s.UNIT_ID, s.USRID, s.SYSTM, s.MODUL, s.EXTNS, s.PDATE, s.INSRT, s.QUERY, s.UPDAT, s.DELET, s.PRINT, s.STATS, s.PAR01, s.PAR02, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_USERPERM s
+  LOG ERRORS INTO ERR$_SEC_USERPERM ('ISB.SEC_USERPERM') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERMENU <- KHI.SEC_USERMENU
+INSERT INTO SEC_USERMENU
+  (USRID, SERNO, RIGHT, DTYPE, PARNO, DETDS, MODNM, PAR01, PAR02, COMPC, BRNCH)
+SELECT s.USRID, s.SERNO, s.RIGHT, s.DTYPE, s.PARNO, s.DETDS, s.MODNM, s.PAR01, s.PAR02, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_USERMENU s
+  LOG ERRORS INTO ERR$_SEC_USERMENU ('KHI.SEC_USERMENU') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USERMENU <- ISB.SEC_USERMENU
+INSERT INTO SEC_USERMENU
+  (USRID, SERNO, RIGHT, DTYPE, PARNO, DETDS, MODNM, PAR01, PAR02, COMPC, BRNCH)
+SELECT s.USRID, s.SERNO, s.RIGHT, s.DTYPE, s.PARNO, s.DETDS, s.MODNM, s.PAR01, s.PAR02, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_USERMENU s
+  LOG ERRORS INTO ERR$_SEC_USERMENU ('ISB.SEC_USERMENU') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USER_FAV <- KHI.SEC_USER_FAV
+INSERT INTO SEC_USER_FAV
+  (USRID, MODLE, COMPC, BRNCH)
+SELECT s.USRID, s.MODLE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_USER_FAV s
+  LOG ERRORS INTO ERR$_SEC_USER_FAV ('KHI.SEC_USER_FAV') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_USER_FAV <- ISB.SEC_USER_FAV
+INSERT INTO SEC_USER_FAV
+  (USRID, MODLE, COMPC, BRNCH)
+SELECT s.USRID, s.MODLE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_USER_FAV s
+  LOG ERRORS INTO ERR$_SEC_USER_FAV ('ISB.SEC_USER_FAV') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_LHISTORY <- KHI.SEC_LHISTORY
+INSERT INTO SEC_LHISTORY
+  (SERNO, PASWD, USRID, UNIT_ID, WSTNO, LTIME, SYSTM, LDATE, OUTDT, COMPC, BRNCH)
+SELECT s.SERNO, s.PASWD, s.USRID, s.UNIT_ID, s.WSTNO, s.LTIME, s.SYSTM, s.LDATE, s.OUTDT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_LHISTORY s
+  LOG ERRORS INTO ERR$_SEC_LHISTORY ('KHI.SEC_LHISTORY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_LHISTORY <- ISB.SEC_LHISTORY
+INSERT INTO SEC_LHISTORY
+  (SERNO, PASWD, USRID, UNIT_ID, WSTNO, LTIME, SYSTM, LDATE, OUTDT, COMPC, BRNCH)
+SELECT s.SERNO, s.PASWD, s.USRID, s.UNIT_ID, s.WSTNO, s.LTIME, s.SYSTM, s.LDATE, s.OUTDT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_LHISTORY s
+  LOG ERRORS INTO ERR$_SEC_LHISTORY ('ISB.SEC_LHISTORY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_MOD_ACES <- KHI.SEC_MOD_ACES
+INSERT INTO SEC_MOD_ACES
+  (USRID, SERNO, WDATE, MODNM, COMPC, BRNCH)
+SELECT s.USRID, s.SERNO, s.WDATE, s.MODNM, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..SEC_MOD_ACES s
+  LOG ERRORS INTO ERR$_SEC_MOD_ACES ('KHI.SEC_MOD_ACES') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT SEC_MOD_ACES <- ISB.SEC_MOD_ACES
+INSERT INTO SEC_MOD_ACES
+  (USRID, SERNO, WDATE, MODNM, COMPC, BRNCH)
+SELECT s.USRID, s.SERNO, s.WDATE, s.MODNM, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..SEC_MOD_ACES s
+  LOG ERRORS INTO ERR$_SEC_MOD_ACES ('ISB.SEC_MOD_ACES') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT U_AUDIT <- KHI.U_AUDIT
+INSERT INTO U_AUDIT
+  (ADATE, TIME, AUSER, MODULE, ACTION, DETAIL, COMPC, BRNCH)
+SELECT s.ADATE, s.TIME, s.AUSER, s.MODULE, s.ACTION, s.DETAIL, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..U_AUDIT s
+  LOG ERRORS INTO ERR$_U_AUDIT ('KHI.U_AUDIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT U_AUDIT <- ISB.U_AUDIT
+INSERT INTO U_AUDIT
+  (ADATE, TIME, AUSER, MODULE, ACTION, DETAIL, COMPC, BRNCH)
+SELECT s.ADATE, s.TIME, s.AUSER, s.MODULE, s.ACTION, s.DETAIL, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..U_AUDIT s
+  LOG ERRORS INTO ERR$_U_AUDIT ('ISB.U_AUDIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT LOG_CUSTOMER_INFO <- ISB.LOG_CUSTOMER_INFO
+INSERT INTO LOG_CUSTOMER_INFO
+  (CUSTOMER_CODE, ZONE_CODE, CHANNEL_CODE, CUSTOMER_NAME, CUSTOMER_ADDRESS1, CUSTOMER_ADDRESS2, PH_NO, MOBILE_NO, FAX_NO, EMAIL, CUSTOMER_TYPE, CREDIT_LIMITE, CASH_DEPOSIT, DEBIT_AMOUNT, CREDIT_AMOUNT, MODE_OF_BUS, CROSS_REF, ENTER_BY, ENTER_DATE, TAX_DEDUCT, SECURITY_DESC, MISC, CLOSED, SALES_TAX_TYPE, SALES_TAX_NO, CLEAN, TRANSITORY, BILLING, ADVANCE, SECURITY, INCENTIVE, TAX, BOUNCE, CARD_OPEN_DATE, CARD_CLOSED_DATE, TERRITORY_CODE, AREA_CODE, BUFFER, BANK_FLOAT, NTN, CNIC, CUSTOMER_GROUP, REG_NO, SALES_TAX_STATS, INCOM_TAX_TYPE, INCOM_TAX_STATS, TYPE_IUD_CM, V_MACHINE, V_OSUSER, DML_TIME, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.ZONE_CODE, s.CHANNEL_CODE, s.CUSTOMER_NAME, s.CUSTOMER_ADDRESS1, s.CUSTOMER_ADDRESS2, s.PH_NO, s.MOBILE_NO, s.FAX_NO, s.EMAIL, s.CUSTOMER_TYPE, s.CREDIT_LIMITE, s.CASH_DEPOSIT, s.DEBIT_AMOUNT, s.CREDIT_AMOUNT, s.MODE_OF_BUS, s.CROSS_REF, s.ENTER_BY, s.ENTER_DATE, s.TAX_DEDUCT, s.SECURITY_DESC, s.MISC, s.CLOSED, s.SALES_TAX_TYPE, s.SALES_TAX_NO, s.CLEAN, s.TRANSITORY, s.BILLING, s.ADVANCE, s.SECURITY, s.INCENTIVE, s.TAX, s.BOUNCE, s.CARD_OPEN_DATE, s.CARD_CLOSED_DATE, s.TERRITORY_CODE, s.AREA_CODE, s.BUFFER, s.BANK_FLOAT, s.NTN, s.CNIC, s.CUSTOMER_GROUP, s.REG_NO, s.SALES_TAX_STATS, s.INCOM_TAX_TYPE, s.INCOM_TAX_STATS, s.TYPE_IUD_CM, s.V_MACHINE, s.V_OSUSER, s.DML_TIME, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..LOG_CUSTOMER_INFO s
+  LOG ERRORS INTO ERR$_LOG_CUSTOMER_INFO ('ISB.LOG_CUSTOMER_INFO') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT LOG_CUSTOMER_CREDIT_APP <- ISB.LOG_CUSTOMER_CREDIT_APP
+INSERT INTO LOG_CUSTOMER_CREDIT_APP
+  (SERNO, CUSTM, CLIMIT, EDATE, REQUEST_DT, REQUESTER, APP_DATE, APP_NAME, APP, UNIT, UNIT_NM, APP_TYPE, TAX_TYPE, AMT, TYPE_IUD_CM, V_MACHINE, V_OSUSER, DML_TIME, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTM, s.CLIMIT, s.EDATE, s.REQUEST_DT, s.REQUESTER, s.APP_DATE, s.APP_NAME, s.APP, s.UNIT, s.UNIT_NM, s.APP_TYPE, s.TAX_TYPE, s.AMT, s.TYPE_IUD_CM, s.V_MACHINE, s.V_OSUSER, s.DML_TIME, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..LOG_CUSTOMER_CREDIT_APP s
+  LOG ERRORS INTO ERR$_LOG_CUSTOMER_CREDIT_APP ('ISB.LOG_CUSTOMER_CREDIT_APP') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RATE_UPDATE_HISTORY <- ISB.RATE_UPDATE_HISTORY
+INSERT INTO RATE_UPDATE_HISTORY
+  (WDATE, UPDATE_BY, REMARKS, COMPC, BRNCH)
+SELECT s.WDATE, s.UPDATE_BY, s.REMARKS, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..RATE_UPDATE_HISTORY s
+  LOG ERRORS INTO ERR$_RATE_UPDATE_HISTORY ('ISB.RATE_UPDATE_HISTORY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_MST <- ISB.PERMIT_MST
+INSERT INTO PERMIT_MST
+  (PERMIT_NO, PERMIT_DATE, VALID_FROM, VALID_TO, CUSTOMER_GROUP, QTY, APPROVED, YEAR, COMPC, BRNCH)
+SELECT s.PERMIT_NO, s.PERMIT_DATE, s.VALID_FROM, s.VALID_TO, s.CUSTOMER_GROUP, s.QTY, s.APPROVED, s.YEAR, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PERMIT_MST s
+  LOG ERRORS INTO ERR$_PERMIT_MST ('ISB.PERMIT_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PERMIT_DTL <- ISB.PERMIT_DTL
+INSERT INTO PERMIT_DTL
+  (PERMIT_NO, CUSTOMER_CODE, DTL_SNO, COMPC, BRNCH)
+SELECT s.PERMIT_NO, s.CUSTOMER_CODE, s.DTL_SNO, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..PERMIT_DTL s
+  LOG ERRORS INTO ERR$_PERMIT_DTL ('ISB.PERMIT_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_AKNOW <- ISB.DC_AKNOW
+INSERT INTO DC_AKNOW
+  (DA_NO, DA_DATE, TRANSP_CODE, DELIVERY_DATE, QUANTITY, AMOUNT, REMARKS, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.DA_NO, s.DA_DATE, s.TRANSP_CODE, s.DELIVERY_DATE, s.QUANTITY, s.AMOUNT, s.REMARKS, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DC_AKNOW s
+  LOG ERRORS INTO ERR$_DC_AKNOW ('ISB.DC_AKNOW') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_AKNOW_DET <- ISB.DC_AKNOW_DET
+INSERT INTO DC_AKNOW_DET
+  (DA_NO, SRL_NO, DC_NO, DC_TYPE, QUANTITY, AMOUNT, DELIVERY_DATE, COMPC, BRNCH)
+SELECT s.DA_NO, s.SRL_NO, s.DC_NO, s.DC_TYPE, s.QUANTITY, s.AMOUNT, s.DELIVERY_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DC_AKNOW_DET s
+  LOG ERRORS INTO ERR$_DC_AKNOW_DET ('ISB.DC_AKNOW_DET') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT TSECURITY_DEPOSIT <- ISB.TSECURITY_DEPOSIT
+INSERT INTO TSECURITY_DEPOSIT
+  (RECEIPT_NO, TDATE, TRANSP_CODE, TYPE, CHQ_NO, AMOUNT, REMARKS, DR_CR, CHQ_DATE, ENTER_BY, ENTER_DATE, PRINT, POST, VOUCHER_NO, VOUCHER_DATE, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.TDATE, s.TRANSP_CODE, s.TYPE, s.CHQ_NO, s.AMOUNT, s.REMARKS, s.DR_CR, s.CHQ_DATE, s.ENTER_BY, s.ENTER_DATE, s.PRINT, s.POST, s.VOUCHER_NO, s.VOUCHER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..TSECURITY_DEPOSIT s
+  LOG ERRORS INTO ERR$_TSECURITY_DEPOSIT ('ISB.TSECURITY_DEPOSIT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT GODOWN_DO <- KHI.GODOWN_DO
+INSERT INTO GODOWN_DO
+  (DO_NO, CUSTOMER_NAME, DC_DATE, DC_TIME, PROD_CD, BRAND, QTY, BAGS, PREP_BY, BRV_NO, REMRK, STATS, COMPC, BRNCH)
+SELECT s.DO_NO, s.CUSTOMER_NAME, s.DC_DATE, s.DC_TIME, s.PROD_CD, s.BRAND, s.QTY, s.BAGS, s.PREP_BY, s.BRV_NO, s.REMRK, s.STATS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..GODOWN_DO s
+  LOG ERRORS INTO ERR$_GODOWN_DO ('KHI.GODOWN_DO') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT GODOWN_DO_DTL <- KHI.GODOWN_DO_DTL
+INSERT INTO GODOWN_DO_DTL
+  (SR_NO, DO_NO, SCH_DATE, QUANTITY, ORDER_DATE, POST_BY, SRF_NO, POST_DATE, DO_NO_DTL, COMPC, BRNCH)
+SELECT s.SR_NO, s.DO_NO, s.SCH_DATE, s.QUANTITY, s.ORDER_DATE, s.POST_BY, s.SRF_NO, s.POST_DATE, s.DO_NO_DTL, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..GODOWN_DO_DTL s
+  LOG ERRORS INTO ERR$_GODOWN_DO_DTL ('KHI.GODOWN_DO_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ACK_MST <- KHI.ACK_MST
+INSERT INTO ACK_MST
+  (ACK_NO, ACK_DT, DUE_DATE, RET_CODE, COMPC, BRNCH)
+SELECT s.ACK_NO, s.ACK_DT, s.DUE_DATE, s.RET_CODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ACK_MST s
+  LOG ERRORS INTO ERR$_ACK_MST ('KHI.ACK_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_COUPON <- KHI.DC_COUPON
+INSERT INTO DC_COUPON
+  (DC_NO, COUPON_NO, COUPON_DATE, DC_TYPE, ACK_NO, COMPC, BRNCH)
+SELECT s.DC_NO, s.COUPON_NO, s.COUPON_DATE, s.DC_TYPE, s.ACK_NO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DC_COUPON s
+  LOG ERRORS INTO ERR$_DC_COUPON ('KHI.DC_COUPON') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RETAILER_INFO <- KHI.RETAILER_INFO
+INSERT INTO RETAILER_INFO
+  (RET_CODE, RET_NAME, TEL_NO, ADDRESS, MOBILE_NO, FAX_NO, EMAIL, COMPC, BRNCH)
+SELECT s.RET_CODE, s.RET_NAME, s.TEL_NO, s.ADDRESS, s.MOBILE_NO, s.FAX_NO, s.EMAIL, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RETAILER_INFO s
+  LOG ERRORS INTO ERR$_RETAILER_INFO ('KHI.RETAILER_INFO') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RET_PAY_MAS <- KHI.RET_PAY_MAS
+INSERT INTO RET_PAY_MAS
+  (RECEIPT_NO, TDATE, TYPE, AMOUNT, CHQ_NO, REMARKS, RET_CODE, ACK_NO, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.TDATE, s.TYPE, s.AMOUNT, s.CHQ_NO, s.REMARKS, s.RET_CODE, s.ACK_NO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RET_PAY_MAS s
+  LOG ERRORS INTO ERR$_RET_PAY_MAS ('KHI.RET_PAY_MAS') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RET_PAY_DET <- KHI.RET_PAY_DET
+INSERT INTO RET_PAY_DET
+  (RECEIPT_NO, TYPE, RET_CODE, COUPON_NO, COMPC, BRNCH)
+SELECT s.RECEIPT_NO, s.TYPE, s.RET_CODE, s.COUPON_NO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RET_PAY_DET s
+  LOG ERRORS INTO ERR$_RET_PAY_DET ('KHI.RET_PAY_DET') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT D_CATEGORY <- KHI.D_CATEGORY
+INSERT INTO D_CATEGORY
+  (CAT_ID, F_QTY, T_QTY, AMT, COMPC, BRNCH)
+SELECT s.CAT_ID, s.F_QTY, s.T_QTY, s.AMT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..D_CATEGORY s
+  LOG ERRORS INTO ERR$_D_CATEGORY ('KHI.D_CATEGORY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT D_DEALER_MASTER <- KHI.D_DEALER_MASTER
+INSERT INTO D_DEALER_MASTER
+  (D_CODE, NAME, ADDRES, PHONE, LOC_ID_UPD, ORG_ID_UPD, USR_ID_UPD, DEPT_ID_UPD, USR_DATE_UPD, COMPC, BRNCH)
+SELECT s.D_CODE, s.NAME, s.ADDRES, s.PHONE, s.LOC_ID_UPD, s.ORG_ID_UPD, s.USR_ID_UPD, s.DEPT_ID_UPD, s.USR_DATE_UPD, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..D_DEALER_MASTER s
+  LOG ERRORS INTO ERR$_D_DEALER_MASTER ('KHI.D_DEALER_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT D_RETAILER_MASTER <- KHI.D_RETAILER_MASTER
+INSERT INTO D_RETAILER_MASTER
+  (R_CODE, NAME, ADDRES, PHONE, CHK_NAME, COMPC, BRNCH)
+SELECT s.R_CODE, s.NAME, s.ADDRES, s.PHONE, s.CHK_NAME, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..D_RETAILER_MASTER s
+  LOG ERRORS INTO ERR$_D_RETAILER_MASTER ('KHI.D_RETAILER_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT D_INSENTIVE_MASTER <- KHI.D_INSENTIVE_MASTER
+INSERT INTO D_INSENTIVE_MASTER
+  (R_CODE, D_CODE, TR_DATE, VEHICLE_NO, DC_NO, DC_TYPE, RATE, REC_QTY, TOT_QTY, COMPC, BRNCH)
+SELECT s.R_CODE, s.D_CODE, s.TR_DATE, s.VEHICLE_NO, s.DC_NO, s.DC_TYPE, s.RATE, s.REC_QTY, s.TOT_QTY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..D_INSENTIVE_MASTER s
+  LOG ERRORS INTO ERR$_D_INSENTIVE_MASTER ('KHI.D_INSENTIVE_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT_TYPE <- KHI.DISCOUNT_TYPE
+INSERT INTO DISCOUNT_TYPE
+  (DISCOUNT_CODE, DISCOUNT_DESC, COMPC, BRNCH)
+SELECT s.DISCOUNT_CODE, s.DISCOUNT_DESC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DISCOUNT_TYPE s
+  LOG ERRORS INTO ERR$_DISCOUNT_TYPE ('KHI.DISCOUNT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT_TYPE <- ISB.DISCOUNT_TYPE
+INSERT INTO DISCOUNT_TYPE
+  (DISCOUNT_CODE, DISCOUNT_DESC, COMPC, BRNCH)
+SELECT s.DISCOUNT_CODE, s.DISCOUNT_DESC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DISCOUNT_TYPE s
+  LOG ERRORS INTO ERR$_DISCOUNT_TYPE ('ISB.DISCOUNT_TYPE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT2 <- KHI.DISCOUNT2
+INSERT INTO DISCOUNT2
+  (CUSTOMER_CODE, REGION, PRODUCT_CODE, DATE_FROM, DATE_TO, STANDARD_DISC, QTY_DISC, MARKET_DISC, AREA_DISC, FINANCIAL_DISC, OTHER_DISC, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.REGION, s.PRODUCT_CODE, s.DATE_FROM, s.DATE_TO, s.STANDARD_DISC, s.QTY_DISC, s.MARKET_DISC, s.AREA_DISC, s.FINANCIAL_DISC, s.OTHER_DISC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DISCOUNT2 s
+  LOG ERRORS INTO ERR$_DISCOUNT2 ('KHI.DISCOUNT2') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT2 <- ISB.DISCOUNT2
+INSERT INTO DISCOUNT2
+  (CUSTOMER_CODE, REGION, PRODUCT_CODE, DATE_FROM, DATE_TO, STANDARD_DISC, QTY_DISC, MARKET_DISC, AREA_DISC, FINANCIAL_DISC, OTHER_DISC, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.REGION, s.PRODUCT_CODE, s.DATE_FROM, s.DATE_TO, s.STANDARD_DISC, s.QTY_DISC, s.MARKET_DISC, s.AREA_DISC, s.FINANCIAL_DISC, s.OTHER_DISC, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DISCOUNT2 s
+  LOG ERRORS INTO ERR$_DISCOUNT2 ('ISB.DISCOUNT2') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT_APP_MASTER <- KHI.DISCOUNT_APP_MASTER
+INSERT INTO DISCOUNT_APP_MASTER
+  (DISCOUNT_NO, DISCOUNT_CODE, DIS_DATE, TOTAL_DISCOUNT, LAST_APP_NO, CANCEL_ON, MODE_OF_PAY, MIN_QTY_DIS, TOT_QTY_DIS, DURATION, ADVANCE_AG_DEP, QTY_SPECIAL_DIS, TOT_QTY_SPDIS, MODE_OF_ADJ, FRQUENCY, CUSTOMER_CODE, COMPC, BRNCH)
+SELECT s.DISCOUNT_NO, s.DISCOUNT_CODE, s.DIS_DATE, s.TOTAL_DISCOUNT, s.LAST_APP_NO, s.CANCEL_ON, s.MODE_OF_PAY, s.MIN_QTY_DIS, s.TOT_QTY_DIS, s.DURATION, s.ADVANCE_AG_DEP, s.QTY_SPECIAL_DIS, s.TOT_QTY_SPDIS, s.MODE_OF_ADJ, s.FRQUENCY, s.CUSTOMER_CODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DISCOUNT_APP_MASTER s
+  LOG ERRORS INTO ERR$_DISCOUNT_APP_MASTER ('KHI.DISCOUNT_APP_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT_APP_MASTER <- ISB.DISCOUNT_APP_MASTER
+INSERT INTO DISCOUNT_APP_MASTER
+  (DISCOUNT_NO, DISCOUNT_CODE, DIS_DATE, TOTAL_DISCOUNT, LAST_APP_NO, CANCEL_ON, MODE_OF_PAY, MIN_QTY_DIS, TOT_QTY_DIS, DURATION, ADVANCE_AG_DEP, QTY_SPECIAL_DIS, TOT_QTY_SPDIS, MODE_OF_ADJ, FRQUENCY, CUSTOMER_CODE, COMPC, BRNCH)
+SELECT s.DISCOUNT_NO, s.DISCOUNT_CODE, s.DIS_DATE, s.TOTAL_DISCOUNT, s.LAST_APP_NO, s.CANCEL_ON, s.MODE_OF_PAY, s.MIN_QTY_DIS, s.TOT_QTY_DIS, s.DURATION, s.ADVANCE_AG_DEP, s.QTY_SPECIAL_DIS, s.TOT_QTY_SPDIS, s.MODE_OF_ADJ, s.FRQUENCY, s.CUSTOMER_CODE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DISCOUNT_APP_MASTER s
+  LOG ERRORS INTO ERR$_DISCOUNT_APP_MASTER ('ISB.DISCOUNT_APP_MASTER') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT_APP_DETAIL <- KHI.DISCOUNT_APP_DETAIL
+INSERT INTO DISCOUNT_APP_DETAIL
+  (TR_NO, DISCOUNT_NO, AMOUNT, COMPC, BRNCH)
+SELECT s.TR_NO, s.DISCOUNT_NO, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DISCOUNT_APP_DETAIL s
+  LOG ERRORS INTO ERR$_DISCOUNT_APP_DETAIL ('KHI.DISCOUNT_APP_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISCOUNT_APP_DETAIL <- ISB.DISCOUNT_APP_DETAIL
+INSERT INTO DISCOUNT_APP_DETAIL
+  (TR_NO, DISCOUNT_NO, AMOUNT, COMPC, BRNCH)
+SELECT s.TR_NO, s.DISCOUNT_NO, s.AMOUNT, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DISCOUNT_APP_DETAIL s
+  LOG ERRORS INTO ERR$_DISCOUNT_APP_DETAIL ('ISB.DISCOUNT_APP_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRICE_OPENING <- KHI.PRICE_OPENING
+INSERT INTO PRICE_OPENING
+  (SERNO, CUSTOMER_CODE, EFDATE, AREA, DISTRICT, AREA_CODE, PRODUCT_CODE, MRP, FREIGHT, D_MARGN, S_MARGN, R_MARGN, OTHER, COMPANY_PRICE, I_TAX, BOOKING_PRICE, DIFF, FED, STAX, TOTAL, INVOICE, INSENTIV, RTENTION, TARGET, STATS, WDATE, LNKNO, RESPER, COMPC, BRNCH)
+SELECT s.SERNO, s.CUSTOMER_CODE, s.EFDATE, s.AREA, s.DISTRICT, s.AREA_CODE, s.PRODUCT_CODE, s.MRP, s.FREIGHT, s.D_MARGN, s.S_MARGN, s.R_MARGN, s.OTHER, s.COMPANY_PRICE, s.I_TAX, s.BOOKING_PRICE, s.DIFF, s.FED, s.STAX, s.TOTAL, s.INVOICE, s.INSENTIV, s.RTENTION, s.TARGET, s.STATS, s.WDATE, s.LNKNO, s.RESPER, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRICE_OPENING s
+  LOG ERRORS INTO ERR$_PRICE_OPENING ('KHI.PRICE_OPENING') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRICE_SLAB_PERIOD <- KHI.PRICE_SLAB_PERIOD
+INSERT INTO PRICE_SLAB_PERIOD
+  (P_CODE, FROM_DATE, TO_DATE, STATUS, COMPC, BRNCH)
+SELECT s.P_CODE, s.FROM_DATE, s.TO_DATE, s.STATUS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRICE_SLAB_PERIOD s
+  LOG ERRORS INTO ERR$_PRICE_SLAB_PERIOD ('KHI.PRICE_SLAB_PERIOD') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRICE_SLAB <- KHI.PRICE_SLAB
+INSERT INTO PRICE_SLAB
+  (CUSTOMER_CODE, PRODUCT_CODE, PRICE_CODE, PRICE, P_CODE, SP_PRICE, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.PRODUCT_CODE, s.PRICE_CODE, s.PRICE, s.P_CODE, s.SP_PRICE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRICE_SLAB s
+  LOG ERRORS INTO ERR$_PRICE_SLAB ('KHI.PRICE_SLAB') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT PRICE_SLAB_OC <- KHI.PRICE_SLAB_OC
+INSERT INTO PRICE_SLAB_OC
+  (P_CODE, OC_NUMBER, COMPC, BRNCH)
+SELECT s.P_CODE, s.OC_NUMBER, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..PRICE_SLAB_OC s
+  LOG ERRORS INTO ERR$_PRICE_SLAB_OC ('KHI.PRICE_SLAB_OC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DUMMY_INV_MST <- KHI.DUMMY_INV_MST
+INSERT INTO DUMMY_INV_MST
+  (SERNO, WDATE, PO_NO, PDATE, RECPNO, LC_NO, LDATE, CUSTM, COMPC, BRNCH)
+SELECT s.SERNO, s.WDATE, s.PO_NO, s.PDATE, s.RECPNO, s.LC_NO, s.LDATE, s.CUSTM, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DUMMY_INV_MST s
+  LOG ERRORS INTO ERR$_DUMMY_INV_MST ('KHI.DUMMY_INV_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DUMMY_INV_DTL <- KHI.DUMMY_INV_DTL
+INSERT INTO DUMMY_INV_DTL
+  (SERNO, ITEMS, QTY, UNIT, RATE, STAX1, STAX2, AUC_VAL, AMOUNT, COMPC, BRNCH)
+SELECT s.SERNO, s.ITEMS, s.QTY, s.UNIT, s.RATE, s.STAX1, s.STAX2, s.AUC_VAL, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DUMMY_INV_DTL s
+  LOG ERRORS INTO ERR$_DUMMY_INV_DTL ('KHI.DUMMY_INV_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISTRICT_DTL <- KHI.DISTRICT_DTL
+INSERT INTO DISTRICT_DTL
+  (DIST_CD, FREIGHT, COGM, FIX_PLANT, FIX_HO, DEPRC, EFDATE, WDATE, AREA_CD, SERNO, RAW_MATERIAL, PACKING_MATERIAL, ELECTRICITY_EXPENSE, COAL_COST, GAS_COST, OTHERS, FIX_HOG, COMPC, BRNCH)
+SELECT s.DIST_CD, s.FREIGHT, s.COGM, s.FIX_PLANT, s.FIX_HO, s.DEPRC, s.EFDATE, s.WDATE, s.AREA_CD, s.SERNO, s.RAW_MATERIAL, s.PACKING_MATERIAL, s.ELECTRICITY_EXPENSE, s.COAL_COST, s.GAS_COST, s.OTHERS, s.FIX_HOG, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DISTRICT_DTL s
+  LOG ERRORS INTO ERR$_DISTRICT_DTL ('KHI.DISTRICT_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISTRICT_DTL <- ISB.DISTRICT_DTL
+INSERT INTO DISTRICT_DTL
+  (DIST_CD, FREIGHT, COGM, FIX_PLANT, FIX_HO, DEPRC, EFDATE, WDATE, AREA_CD, SERNO, RAW_MATERIAL, PACKING_MATERIAL, ELECTRICITY_EXPENSE, COAL_COST, GAS_COST, OTHERS, FIX_HOG, COMPC, BRNCH)
+SELECT s.DIST_CD, s.FREIGHT, s.COGM, s.FIX_PLANT, s.FIX_HO, s.DEPRC, s.EFDATE, s.WDATE, s.AREA_CD, s.SERNO, s.RAW_MATERIAL, s.PACKING_MATERIAL, s.ELECTRICITY_EXPENSE, s.COAL_COST, s.GAS_COST, s.OTHERS, s.FIX_HOG, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DISTRICT_DTL s
+  LOG ERRORS INTO ERR$_DISTRICT_DTL ('ISB.DISTRICT_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT APCAMA_QUOTA <- KHI.APCAMA_QUOTA
+INSERT INTO APCAMA_QUOTA
+  (SERNO, QOUTA_DATE, QOUTA_QTY, MARGIN_QTY, COMPC, BRNCH)
+SELECT s.SERNO, s.QOUTA_DATE, s.QOUTA_QTY, s.MARGIN_QTY, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..APCAMA_QUOTA s
+  LOG ERRORS INTO ERR$_APCAMA_QUOTA ('KHI.APCAMA_QUOTA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT APCAMA_QUOTA <- ISB.APCAMA_QUOTA
+INSERT INTO APCAMA_QUOTA
+  (SERNO, QOUTA_DATE, QOUTA_QTY, MARGIN_QTY, COMPC, BRNCH)
+SELECT s.SERNO, s.QOUTA_DATE, s.QOUTA_QTY, s.MARGIN_QTY, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..APCAMA_QUOTA s
+  LOG ERRORS INTO ERR$_APCAMA_QUOTA ('ISB.APCAMA_QUOTA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT MARKETING <- KHI.MARKETING
+INSERT INTO MARKETING
+  (ENT_DATE, DO_NO, VEH_NO, USER_ID, SHEET_NO, REM, COMPC, BRNCH)
+SELECT s.ENT_DATE, s.DO_NO, s.VEH_NO, s.USER_ID, s.SHEET_NO, s.REM, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..MARKETING s
+  LOG ERRORS INTO ERR$_MARKETING ('KHI.MARKETING') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT REG_DESC <- KHI.REG_DESC
+INSERT INTO REG_DESC
+  (CODE, REG_CODE, REG_NO, DESCRIPTION, COMPC, BRNCH)
+SELECT s.CODE, s.REG_CODE, s.REG_NO, s.DESCRIPTION, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..REG_DESC s
+  LOG ERRORS INTO ERR$_REG_DESC ('KHI.REG_DESC') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RESPONSIBLE_PERSON <- KHI.RESPONSIBLE_PERSON
+INSERT INTO RESPONSIBLE_PERSON
+  (RESPER, DESCR, COMPC, BRNCH)
+SELECT s.RESPER, s.DESCR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RESPONSIBLE_PERSON s
+  LOG ERRORS INTO ERR$_RESPONSIBLE_PERSON ('KHI.RESPONSIBLE_PERSON') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT BLOCK_ADV_DEBTS <- KHI.BLOCK_ADV_DEBTS
+INSERT INTO BLOCK_ADV_DEBTS
+  (CUSTOMER_CODE, TYPE, AMOUNT, COMPC, BRNCH)
+SELECT s.CUSTOMER_CODE, s.TYPE, s.AMOUNT, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..BLOCK_ADV_DEBTS s
+  LOG ERRORS INTO ERR$_BLOCK_ADV_DEBTS ('KHI.BLOCK_ADV_DEBTS') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT MASTER_AREA <- KHI.MASTER_AREA
+INSERT INTO MASTER_AREA
+  (M_AREA_CD, MASTER_AREA_NMAE, COMPC, BRNCH)
+SELECT s.M_AREA_CD, s.MASTER_AREA_NMAE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..MASTER_AREA s
+  LOG ERRORS INTO ERR$_MASTER_AREA ('KHI.MASTER_AREA') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DISTRICT <- KHI.DISTRICT
+INSERT INTO DISTRICT
+  (AREA_CD, DIST_CD, DIST_NAME, OLD_DISTRICT_CD, COMPC, BRNCH)
+SELECT s.AREA_CD, s.DIST_CD, s.DIST_NAME, s.OLD_DISTRICT_CD, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DISTRICT s
+  LOG ERRORS INTO ERR$_DISTRICT ('KHI.DISTRICT') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CITY <- KHI.CITY
+INSERT INTO CITY
+  (AREA_CD, DIST_CD, CITY_CD, CITY_NAME, OLD_DIST_CD, STATS, COMPC, BRNCH)
+SELECT s.AREA_CD, s.DIST_CD, s.CITY_CD, s.CITY_NAME, s.OLD_DIST_CD, s.STATS, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CITY s
+  LOG ERRORS INTO ERR$_CITY ('KHI.CITY') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT AREA_RATES_DIST <- KHI.AREA_RATES_DIST
+INSERT INTO AREA_RATES_DIST
+  (SERNO, LNKNO, P_LNKNO, G_CD, AREA_CD, DIST_CD, BOOKING_P, FREIGHT, NET_BOOK, REBATE, EX_FACTORY, TAX_236, FED, SALES_TAX, NET_RET, MRP, COMPC, BRNCH)
+SELECT s.SERNO, s.LNKNO, s.P_LNKNO, s.G_CD, s.AREA_CD, s.DIST_CD, s.BOOKING_P, s.FREIGHT, s.NET_BOOK, s.REBATE, s.EX_FACTORY, s.TAX_236, s.FED, s.SALES_TAX, s.NET_RET, s.MRP, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..AREA_RATES_DIST s
+  LOG ERRORS INTO ERR$_AREA_RATES_DIST ('KHI.AREA_RATES_DIST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CANCELLATION <- KHI.ORDER_CANCELLATION
+INSERT INTO ORDER_CANCELLATION
+  (OC_ADVISE_NO, OC_ADVISE_DATE, CUSTOMER_CODE, SR_NO, DO_NO, PRODUCT_CODE, DATE_OF_ISSUE, QUANTITY, DO_DATE, OC_NO, OC_DATE, POST_BY, DOC_TYPE, COMPC, BRNCH)
+SELECT s.OC_ADVISE_NO, s.OC_ADVISE_DATE, s.CUSTOMER_CODE, s.SR_NO, s.DO_NO, s.PRODUCT_CODE, s.DATE_OF_ISSUE, s.QUANTITY, s.DO_DATE, s.OC_NO, s.OC_DATE, s.POST_BY, s.DOC_TYPE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..ORDER_CANCELLATION s
+  LOG ERRORS INTO ERR$_ORDER_CANCELLATION ('KHI.ORDER_CANCELLATION') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT ORDER_CANCELLATION <- ISB.ORDER_CANCELLATION
+INSERT INTO ORDER_CANCELLATION
+  (OC_ADVISE_NO, OC_ADVISE_DATE, CUSTOMER_CODE, SR_NO, DO_NO, PRODUCT_CODE, DATE_OF_ISSUE, QUANTITY, DO_DATE, OC_NO, OC_DATE, POST_BY, DOC_TYPE, COMPC, BRNCH)
+SELECT s.OC_ADVISE_NO, s.OC_ADVISE_DATE, s.CUSTOMER_CODE, s.SR_NO, s.DO_NO, s.PRODUCT_CODE, s.DATE_OF_ISSUE, s.QUANTITY, s.DO_DATE, s.OC_NO, s.OC_DATE, s.POST_BY, s.DOC_TYPE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..ORDER_CANCELLATION s
+  LOG ERRORS INTO ERR$_ORDER_CANCELLATION ('ISB.ORDER_CANCELLATION') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RECEIPT_CANCEL <- KHI.RECEIPT_CANCEL
+INSERT INTO RECEIPT_CANCEL
+  (CANCEL_NO, RECEIPT_NO, CASH_CHEQ_CD, CANCEL_DATE, AMOUNT, POST_BY, ENTER_BY, ENTER_DATE, POST_DATE, REM, CONDITION, CUSTOMER_CODE, RECEIPT_SRL, COMPC, BRNCH)
+SELECT s.CANCEL_NO, s.RECEIPT_NO, s.CASH_CHEQ_CD, s.CANCEL_DATE, s.AMOUNT, s.POST_BY, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.REM, s.CONDITION, s.CUSTOMER_CODE, s.RECEIPT_SRL, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..RECEIPT_CANCEL s
+  LOG ERRORS INTO ERR$_RECEIPT_CANCEL ('KHI.RECEIPT_CANCEL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT RECEIPT_CANCEL <- ISB.RECEIPT_CANCEL
+INSERT INTO RECEIPT_CANCEL
+  (CANCEL_NO, RECEIPT_NO, CASH_CHEQ_CD, CANCEL_DATE, AMOUNT, POST_BY, ENTER_BY, ENTER_DATE, POST_DATE, REM, CONDITION, CUSTOMER_CODE, RECEIPT_SRL, COMPC, BRNCH)
+SELECT s.CANCEL_NO, s.RECEIPT_NO, s.CASH_CHEQ_CD, s.CANCEL_DATE, s.AMOUNT, s.POST_BY, s.ENTER_BY, s.ENTER_DATE, s.POST_DATE, s.REM, s.CONDITION, s.CUSTOMER_CODE, s.RECEIPT_SRL, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..RECEIPT_CANCEL s
+  LOG ERRORS INTO ERR$_RECEIPT_CANCEL ('ISB.RECEIPT_CANCEL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_APP_MASTER1 <- KHI.CREDIT_APP_MASTER1
+INSERT INTO CREDIT_APP_MASTER1
+  (CASE_NO, CASE_DATE, CUSTOMER_CODE, CREDIT_LIMIT, PERIOD_CREDIT, SECURITY, GUANRANTY, GUANRANTY_DATE, ENTER_BY, ENTER_DATE, POST, POST_BY, POST_DATE, COMPC, BRNCH)
+SELECT s.CASE_NO, s.CASE_DATE, s.CUSTOMER_CODE, s.CREDIT_LIMIT, s.PERIOD_CREDIT, s.SECURITY, s.GUANRANTY, s.GUANRANTY_DATE, s.ENTER_BY, s.ENTER_DATE, s.POST, s.POST_BY, s.POST_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_APP_MASTER1 s
+  LOG ERRORS INTO ERR$_CREDIT_APP_MASTER1 ('KHI.CREDIT_APP_MASTER1') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CREDIT_APP_DETAIL1 <- KHI.CREDIT_APP_DETAIL1
+INSERT INTO CREDIT_APP_DETAIL1
+  (CASE_NO, CREDIT_CODE, CREDIT_AMOUNT, PERIOD, TYPE_OF_SEC, PRE_CREDIT_AMT, EXPIRED_ON, LAST_CASE_NO, COMPC, BRNCH)
+SELECT s.CASE_NO, s.CREDIT_CODE, s.CREDIT_AMOUNT, s.PERIOD, s.TYPE_OF_SEC, s.PRE_CREDIT_AMT, s.EXPIRED_ON, s.LAST_CASE_NO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CREDIT_APP_DETAIL1 s
+  LOG ERRORS INTO ERR$_CREDIT_APP_DETAIL1 ('KHI.CREDIT_APP_DETAIL1') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DEBIT_CREDIT_NOTE <- KHI.DEBIT_CREDIT_NOTE
+INSERT INTO DEBIT_CREDIT_NOTE
+  (SR_NO, DB_CR_DATE, CUSTOMER_CODE, CODE_NO, DB_CR_CD, AMOUNT, CHEQUE_NO, RECEIPT_NO, RECEIPT_DATE, POST_BY, POST_DATE, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.SR_NO, s.DB_CR_DATE, s.CUSTOMER_CODE, s.CODE_NO, s.DB_CR_CD, s.AMOUNT, s.CHEQUE_NO, s.RECEIPT_NO, s.RECEIPT_DATE, s.POST_BY, s.POST_DATE, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DEBIT_CREDIT_NOTE s
+  LOG ERRORS INTO ERR$_DEBIT_CREDIT_NOTE ('KHI.DEBIT_CREDIT_NOTE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DEBIT_CREDIT_NOTE <- ISB.DEBIT_CREDIT_NOTE
+INSERT INTO DEBIT_CREDIT_NOTE
+  (SR_NO, DB_CR_DATE, CUSTOMER_CODE, CODE_NO, DB_CR_CD, AMOUNT, CHEQUE_NO, RECEIPT_NO, RECEIPT_DATE, POST_BY, POST_DATE, ENTER_BY, ENTER_DATE, COMPC, BRNCH)
+SELECT s.SR_NO, s.DB_CR_DATE, s.CUSTOMER_CODE, s.CODE_NO, s.DB_CR_CD, s.AMOUNT, s.CHEQUE_NO, s.RECEIPT_NO, s.RECEIPT_DATE, s.POST_BY, s.POST_DATE, s.ENTER_BY, s.ENTER_DATE, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..DEBIT_CREDIT_NOTE s
+  LOG ERRORS INTO ERR$_DEBIT_CREDIT_NOTE ('ISB.DEBIT_CREDIT_NOTE') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT DC_ADJ_3 <- KHI.DC_ADJ_3
+INSERT INTO DC_ADJ_3
+  (DOCNO, SERNO, CUSTM, DOC_DATE, SLR, DOC_TYPE, DOC_NO, NARRATION, DR, CR, COMPC, BRNCH)
+SELECT s.DOCNO, s.SERNO, s.CUSTM, s.DOC_DATE, s.SLR, s.DOC_TYPE, s.DOC_NO, s.NARRATION, s.DR, s.CR, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..DC_ADJ_3 s
+  LOG ERRORS INTO ERR$_DC_ADJ_3 ('KHI.DC_ADJ_3') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT REGION <- KHI.REGION
+INSERT INTO REGION
+  (REGION, DESCRIPTION, COMPC, BRNCH)
+SELECT s.REGION, s.DESCRIPTION, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..REGION s
+  LOG ERRORS INTO ERR$_REGION ('KHI.REGION') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT REGION <- ISB.REGION
+INSERT INTO REGION
+  (REGION, DESCRIPTION, COMPC, BRNCH)
+SELECT s.REGION, s.DESCRIPTION, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..REGION s
+  LOG ERRORS INTO ERR$_REGION ('ISB.REGION') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT REGION_DETAIL <- KHI.REGION_DETAIL
+INSERT INTO REGION_DETAIL
+  (REGION, CUSTOMER_FROM, CUSTOMER_TO, COMPC, BRNCH)
+SELECT s.REGION, s.CUSTOMER_FROM, s.CUSTOMER_TO, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..REGION_DETAIL s
+  LOG ERRORS INTO ERR$_REGION_DETAIL ('KHI.REGION_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT REGION_DETAIL <- ISB.REGION_DETAIL
+INSERT INTO REGION_DETAIL
+  (REGION, CUSTOMER_FROM, CUSTOMER_TO, COMPC, BRNCH)
+SELECT s.REGION, s.CUSTOMER_FROM, s.CUSTOMER_TO, NVL(s.COMPC, 1), 2
+  FROM &&ISB_SCH..REGION_DETAIL s
+  LOG ERRORS INTO ERR$_REGION_DETAIL ('ISB.REGION_DETAIL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT NEW_REGION <- KHI.NEW_REGION
+INSERT INTO NEW_REGION
+  (NEW_REGION_ID, REGION_DESC, FROM_CODE, TO_CODE, COMPC, BRNCH)
+SELECT s.NEW_REGION_ID, s.REGION_DESC, s.FROM_CODE, s.TO_CODE, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..NEW_REGION s
+  LOG ERRORS INTO ERR$_NEW_REGION ('KHI.NEW_REGION') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT REGION_PRICE_LIST <- KHI.REGION_PRICE_LIST
+INSERT INTO REGION_PRICE_LIST
+  (REGION, PRODUCT_CODE, PRICE, NORMAL_DISC, QTY_DISC, DEPOSIT_DISC, ADVANCE_DISC, TOTAL_DISC, COMPC, BRNCH)
+SELECT s.REGION, s.PRODUCT_CODE, s.PRICE, s.NORMAL_DISC, s.QTY_DISC, s.DEPOSIT_DISC, s.ADVANCE_DISC, s.TOTAL_DISC, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..REGION_PRICE_LIST s
+  LOG ERRORS INTO ERR$_REGION_PRICE_LIST ('KHI.REGION_PRICE_LIST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUSTOMERS_DCL <- KHI.CUSTOMERS_DCL
+INSERT INTO CUSTOMERS_DCL
+  (CUSTOMER_ID, CUSTOMER_TYPE_ID, CUSTOMER_S_NAME, CUSTOMER_L_NAME, CUSTOMER_CONTACT_PERSON, CUSTOMER_GST_NO, CUSTOMER_ADD1, CUSTOMER_ADD2, CUSTOMER_PHONE, CUSTOMER_FAX, CUSTOMER_CELL, CUSTOMER_EMAIL, CUSTOMER_WEB, CUSTOMER_STATUS, CUSTOMER_CITY_ID, CUSTOMER_COUNTRY_ID, CUSTOMER_COMPANY_ID, NTN#, G_CODE, GL_CODE, G_NAME, COMPC, BRNCH)
+SELECT s.CUSTOMER_ID, s.CUSTOMER_TYPE_ID, s.CUSTOMER_S_NAME, s.CUSTOMER_L_NAME, s.CUSTOMER_CONTACT_PERSON, s.CUSTOMER_GST_NO, s.CUSTOMER_ADD1, s.CUSTOMER_ADD2, s.CUSTOMER_PHONE, s.CUSTOMER_FAX, s.CUSTOMER_CELL, s.CUSTOMER_EMAIL, s.CUSTOMER_WEB, s.CUSTOMER_STATUS, s.CUSTOMER_CITY_ID, s.CUSTOMER_COUNTRY_ID, s.CUSTOMER_COMPANY_ID, s.NTN#, s.G_CODE, s.GL_CODE, s.G_NAME, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUSTOMERS_DCL s
+  LOG ERRORS INTO ERR$_CUSTOMERS_DCL ('KHI.CUSTOMERS_DCL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUST_GRP_MST <- KHI.CUST_GRP_MST
+INSERT INTO CUST_GRP_MST
+  (CG_ID, CG_S_NM, CG_L_NM, CG_CNTP, CG_GST#, CG_ADD1, CG_ADD2, CG_PH, CG_FAX, CG_EMAIL, CG_NTN#, CG_GLCODE, CG_TYPE, CG_CITY, CG_COUNTRY, OLD_CUSTID, UNIT_ID, LOC_ID_UPD, ORG_ID_UPD, DEPT_ID_UPD, USR_ID_UPD, USR_DATE_UPD, OPEN_BAL, COMPC, BRNCH)
+SELECT s.CG_ID, s.CG_S_NM, s.CG_L_NM, s.CG_CNTP, s.CG_GST#, s.CG_ADD1, s.CG_ADD2, s.CG_PH, s.CG_FAX, s.CG_EMAIL, s.CG_NTN#, s.CG_GLCODE, s.CG_TYPE, s.CG_CITY, s.CG_COUNTRY, s.OLD_CUSTID, s.UNIT_ID, s.LOC_ID_UPD, s.ORG_ID_UPD, s.DEPT_ID_UPD, s.USR_ID_UPD, s.USR_DATE_UPD, s.OPEN_BAL, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUST_GRP_MST s
+  LOG ERRORS INTO ERR$_CUST_GRP_MST ('KHI.CUST_GRP_MST') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+PROMPT CUST_GRP_DTL <- KHI.CUST_GRP_DTL
+INSERT INTO CUST_GRP_DTL
+  (CG_ID, CUSTOMER_CODE, CUSTOMER_COMPANY_ID, CG_ACTIVE, CG_D_ID, OPEN_BALANCE, LOC_ID_UPD, ORG_ID_UPD, DEPT_ID_UPD, USR_ID_UPD, USR_DATE_UPD, COMPC, BRNCH)
+SELECT s.CG_ID, s.CUSTOMER_CODE, s.CUSTOMER_COMPANY_ID, s.CG_ACTIVE, s.CG_D_ID, s.OPEN_BALANCE, s.LOC_ID_UPD, s.ORG_ID_UPD, s.DEPT_ID_UPD, s.USR_ID_UPD, s.USR_DATE_UPD, NVL(s.COMPC, 1), 1
+  FROM &&KHI_SCH..CUST_GRP_DTL s
+  LOG ERRORS INTO ERR$_CUST_GRP_DTL ('KHI.CUST_GRP_DTL') REJECT LIMIT UNLIMITED;
+COMMIT;
+
+-- ---------------------------------------------------------------- reconciliation (every DIFF must be 0)
+SET PAGESIZE 500 LINESIZE 200
+COLUMN tgt FORMAT A28
+COLUMN src FORMAT A32
+SELECT x.*, src_rows - tgt_rows AS diff FROM (
+SELECT 'UNIT_MST' tgt, 'KHI.UNIT_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..UNIT_MST) src_rows, (SELECT COUNT(*) FROM UNIT_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_UNIT_MST WHERE ORA_ERR_TAG$ = 'KHI.UNIT_MST') err_rows FROM dual
+UNION ALL
+SELECT 'UNIT_MST' tgt, 'ISB.UNIT_MST' src, (SELECT COUNT(*) FROM &&ISB_SCH..UNIT_MST) src_rows, (SELECT COUNT(*) FROM UNIT_MST WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_UNIT_MST WHERE ORA_ERR_TAG$ = 'ISB.UNIT_MST') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_TYPE' tgt, 'KHI.CREDIT_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_TYPE) src_rows, (SELECT COUNT(*) FROM CREDIT_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_TYPE WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_TYPE' tgt, 'ISB.CREDIT_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_TYPE) src_rows, (SELECT COUNT(*) FROM CREDIT_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_TYPE WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_NOTE_TYPE' tgt, 'KHI.CREDIT_NOTE_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_NOTE_TYPE) src_rows, (SELECT COUNT(*) FROM CREDIT_NOTE_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_NOTE_TYPE WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_NOTE_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_NOTE_TYPE' tgt, 'ISB.CREDIT_NOTE_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_NOTE_TYPE) src_rows, (SELECT COUNT(*) FROM CREDIT_NOTE_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_NOTE_TYPE WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_NOTE_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CATEGORY_TYPE' tgt, 'KHI.CATEGORY_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..CATEGORY_TYPE) src_rows, (SELECT COUNT(*) FROM CATEGORY_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CATEGORY_TYPE WHERE ORA_ERR_TAG$ = 'KHI.CATEGORY_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CATEGORY_TYPE' tgt, 'ISB.CATEGORY_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..CATEGORY_TYPE) src_rows, (SELECT COUNT(*) FROM CATEGORY_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CATEGORY_TYPE WHERE ORA_ERR_TAG$ = 'ISB.CATEGORY_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CHANNEL_DESC' tgt, 'KHI.CHANNEL_DESC' src, (SELECT COUNT(*) FROM &&KHI_SCH..CHANNEL_DESC) src_rows, (SELECT COUNT(*) FROM CHANNEL_DESC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CHANNEL_DESC WHERE ORA_ERR_TAG$ = 'KHI.CHANNEL_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'CHANNEL_DESC' tgt, 'ISB.CHANNEL_DESC' src, (SELECT COUNT(*) FROM &&ISB_SCH..CHANNEL_DESC) src_rows, (SELECT COUNT(*) FROM CHANNEL_DESC WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CHANNEL_DESC WHERE ORA_ERR_TAG$ = 'ISB.CHANNEL_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_GROUP' tgt, 'KHI.CUSTOMER_GROUP' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_GROUP) src_rows, (SELECT COUNT(*) FROM CUSTOMER_GROUP WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_GROUP WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_GROUP') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_GROUP' tgt, 'ISB.CUSTOMER_GROUP' src, (SELECT COUNT(*) FROM &&ISB_SCH..CUSTOMER_GROUP) src_rows, (SELECT COUNT(*) FROM CUSTOMER_GROUP WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_GROUP WHERE ORA_ERR_TAG$ = 'ISB.CUSTOMER_GROUP') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_TAX' tgt, 'KHI.SALES_TAX' src, (SELECT COUNT(*) FROM &&KHI_SCH..SALES_TAX) src_rows, (SELECT COUNT(*) FROM SALES_TAX WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_TAX WHERE ORA_ERR_TAG$ = 'KHI.SALES_TAX') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_TAX' tgt, 'ISB.SALES_TAX' src, (SELECT COUNT(*) FROM &&ISB_SCH..SALES_TAX) src_rows, (SELECT COUNT(*) FROM SALES_TAX WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_TAX WHERE ORA_ERR_TAG$ = 'ISB.SALES_TAX') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_TAX_FED' tgt, 'KHI.SALES_TAX_FED' src, (SELECT COUNT(*) FROM &&KHI_SCH..SALES_TAX_FED) src_rows, (SELECT COUNT(*) FROM SALES_TAX_FED WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_TAX_FED WHERE ORA_ERR_TAG$ = 'KHI.SALES_TAX_FED') err_rows FROM dual
+UNION ALL
+SELECT 'CED_SETUP' tgt, 'KHI.CED_SETUP' src, (SELECT COUNT(*) FROM &&KHI_SCH..CED_SETUP) src_rows, (SELECT COUNT(*) FROM CED_SETUP WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CED_SETUP WHERE ORA_ERR_TAG$ = 'KHI.CED_SETUP') err_rows FROM dual
+UNION ALL
+SELECT 'MODE_OF_TRANSPORT' tgt, 'KHI.MODE_OF_TRANSPORT' src, (SELECT COUNT(*) FROM &&KHI_SCH..MODE_OF_TRANSPORT) src_rows, (SELECT COUNT(*) FROM MODE_OF_TRANSPORT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_MODE_OF_TRANSPORT WHERE ORA_ERR_TAG$ = 'KHI.MODE_OF_TRANSPORT') err_rows FROM dual
+UNION ALL
+SELECT 'MODE_OF_TRANSPORT' tgt, 'ISB.MODE_OF_TRANSPORT' src, (SELECT COUNT(*) FROM &&ISB_SCH..MODE_OF_TRANSPORT) src_rows, (SELECT COUNT(*) FROM MODE_OF_TRANSPORT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_MODE_OF_TRANSPORT WHERE ORA_ERR_TAG$ = 'ISB.MODE_OF_TRANSPORT') err_rows FROM dual
+UNION ALL
+SELECT 'BANK_DESC' tgt, 'KHI.BANK_DESC' src, (SELECT COUNT(*) FROM &&KHI_SCH..BANK_DESC) src_rows, (SELECT COUNT(*) FROM BANK_DESC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BANK_DESC WHERE ORA_ERR_TAG$ = 'KHI.BANK_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'BANK_DESC' tgt, 'ISB.BANK_DESC' src, (SELECT COUNT(*) FROM &&ISB_SCH..BANK_DESC) src_rows, (SELECT COUNT(*) FROM BANK_DESC WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_BANK_DESC WHERE ORA_ERR_TAG$ = 'ISB.BANK_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'BAGS_COLOR' tgt, 'KHI.BAGS_COLOR' src, (SELECT COUNT(*) FROM &&KHI_SCH..BAGS_COLOR) src_rows, (SELECT COUNT(*) FROM BAGS_COLOR WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BAGS_COLOR WHERE ORA_ERR_TAG$ = 'KHI.BAGS_COLOR') err_rows FROM dual
+UNION ALL
+SELECT 'PROD_BRAND' tgt, 'KHI.PROD_BRAND' src, (SELECT COUNT(*) FROM &&KHI_SCH..PROD_BRAND) src_rows, (SELECT COUNT(*) FROM PROD_BRAND WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PROD_BRAND WHERE ORA_ERR_TAG$ = 'KHI.PROD_BRAND') err_rows FROM dual
+UNION ALL
+SELECT 'GROUP_MST' tgt, 'KHI.GROUP_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..GROUP_MST) src_rows, (SELECT COUNT(*) FROM GROUP_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_GROUP_MST WHERE ORA_ERR_TAG$ = 'KHI.GROUP_MST') err_rows FROM dual
+UNION ALL
+SELECT 'GROUP_PRODUCT' tgt, 'KHI.GROUP_PRODUCT' src, (SELECT COUNT(*) FROM &&KHI_SCH..GROUP_PRODUCT) src_rows, (SELECT COUNT(*) FROM GROUP_PRODUCT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_GROUP_PRODUCT WHERE ORA_ERR_TAG$ = 'KHI.GROUP_PRODUCT') err_rows FROM dual
+UNION ALL
+SELECT 'BLOCK_CUSTOMER_GROUP' tgt, 'KHI.BLOCK_CUSTOMER_GROUP' src, (SELECT COUNT(*) FROM &&KHI_SCH..BLOCK_CUSTOMER_GROUP) src_rows, (SELECT COUNT(*) FROM BLOCK_CUSTOMER_GROUP WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BLOCK_CUSTOMER_GROUP WHERE ORA_ERR_TAG$ = 'KHI.BLOCK_CUSTOMER_GROUP') err_rows FROM dual
+UNION ALL
+SELECT 'EXCHANGE_RATE_MAST' tgt, 'KHI.EXCHANGE_RATE_MAST' src, (SELECT COUNT(*) FROM &&KHI_SCH..EXCHANGE_RATE_MAST) src_rows, (SELECT COUNT(*) FROM EXCHANGE_RATE_MAST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_EXCHANGE_RATE_MAST WHERE ORA_ERR_TAG$ = 'KHI.EXCHANGE_RATE_MAST') err_rows FROM dual
+UNION ALL
+SELECT 'EXCHANGE_RATE_DTL' tgt, 'KHI.EXCHANGE_RATE_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..EXCHANGE_RATE_DTL) src_rows, (SELECT COUNT(*) FROM EXCHANGE_RATE_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_EXCHANGE_RATE_DTL WHERE ORA_ERR_TAG$ = 'KHI.EXCHANGE_RATE_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_YEAR' tgt, 'KHI.SALES_YEAR' src, (SELECT COUNT(*) FROM &&KHI_SCH..SALES_YEAR) src_rows, (SELECT COUNT(*) FROM SALES_YEAR WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_YEAR WHERE ORA_ERR_TAG$ = 'KHI.SALES_YEAR') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_YEAR' tgt, 'ISB.SALES_YEAR' src, (SELECT COUNT(*) FROM &&ISB_SCH..SALES_YEAR) src_rows, (SELECT COUNT(*) FROM SALES_YEAR WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_YEAR WHERE ORA_ERR_TAG$ = 'ISB.SALES_YEAR') err_rows FROM dual
+UNION ALL
+SELECT 'COMPANY' tgt, 'KHI.COMPANY' src, (SELECT COUNT(*) FROM &&KHI_SCH..COMPANY) src_rows, (SELECT COUNT(*) FROM COMPANY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_COMPANY WHERE ORA_ERR_TAG$ = 'KHI.COMPANY') err_rows FROM dual
+UNION ALL
+SELECT 'COMPANY' tgt, 'ISB.COMPANY' src, (SELECT COUNT(*) FROM &&ISB_SCH..COMPANY) src_rows, (SELECT COUNT(*) FROM COMPANY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_COMPANY WHERE ORA_ERR_TAG$ = 'ISB.COMPANY') err_rows FROM dual
+UNION ALL
+SELECT 'DAYS_LOCK' tgt, 'KHI.DAYS_LOCK' src, (SELECT COUNT(*) FROM &&KHI_SCH..DAYS_LOCK) src_rows, (SELECT COUNT(*) FROM DAYS_LOCK WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DAYS_LOCK WHERE ORA_ERR_TAG$ = 'KHI.DAYS_LOCK') err_rows FROM dual
+UNION ALL
+SELECT 'BLOCK_DO_DATE' tgt, 'KHI.BLOCK_DO_DATE' src, (SELECT COUNT(*) FROM &&KHI_SCH..BLOCK_DO_DATE) src_rows, (SELECT COUNT(*) FROM BLOCK_DO_DATE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BLOCK_DO_DATE WHERE ORA_ERR_TAG$ = 'KHI.BLOCK_DO_DATE') err_rows FROM dual
+UNION ALL
+SELECT 'AGGING_GROUP' tgt, 'KHI.AGGING_GROUP' src, (SELECT COUNT(*) FROM &&KHI_SCH..AGGING_GROUP) src_rows, (SELECT COUNT(*) FROM AGGING_GROUP WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AGGING_GROUP WHERE ORA_ERR_TAG$ = 'KHI.AGGING_GROUP') err_rows FROM dual
+UNION ALL
+SELECT 'AGGING_RULE' tgt, 'KHI.AGGING_RULE' src, (SELECT COUNT(*) FROM &&KHI_SCH..AGGING_RULE) src_rows, (SELECT COUNT(*) FROM AGGING_RULE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AGGING_RULE WHERE ORA_ERR_TAG$ = 'KHI.AGGING_RULE') err_rows FROM dual
+UNION ALL
+SELECT 'ZONE_DESC' tgt, 'KHI.ZONE_DESC' src, (SELECT COUNT(*) FROM &&KHI_SCH..ZONE_DESC) src_rows, (SELECT COUNT(*) FROM ZONE_DESC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ZONE_DESC WHERE ORA_ERR_TAG$ = 'KHI.ZONE_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'ZONE_DESC' tgt, 'ISB.ZONE_DESC' src, (SELECT COUNT(*) FROM &&ISB_SCH..ZONE_DESC) src_rows, (SELECT COUNT(*) FROM ZONE_DESC WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ZONE_DESC WHERE ORA_ERR_TAG$ = 'ISB.ZONE_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'TERRITORY' tgt, 'ISB.TERRITORY' src, (SELECT COUNT(*) FROM &&ISB_SCH..TERRITORY) src_rows, (SELECT COUNT(*) FROM TERRITORY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TERRITORY WHERE ORA_ERR_TAG$ = 'ISB.TERRITORY') err_rows FROM dual
+UNION ALL
+SELECT 'AREA' tgt, 'KHI.AREA' src, (SELECT COUNT(*) FROM &&KHI_SCH..AREA) src_rows, (SELECT COUNT(*) FROM AREA WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA WHERE ORA_ERR_TAG$ = 'KHI.AREA') err_rows FROM dual
+UNION ALL
+SELECT 'AREA' tgt, 'ISB.AREA' src, (SELECT COUNT(*) FROM &&ISB_SCH..AREA) src_rows, (SELECT COUNT(*) FROM AREA WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA WHERE ORA_ERR_TAG$ = 'ISB.AREA') err_rows FROM dual
+UNION ALL
+SELECT 'INSTRUMENT_TYPE' tgt, 'KHI.INSTRUMENT_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..INSTRUMENT_TYPE) src_rows, (SELECT COUNT(*) FROM INSTRUMENT_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_INSTRUMENT_TYPE WHERE ORA_ERR_TAG$ = 'KHI.INSTRUMENT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'INSTRUMENT_TYPE' tgt, 'ISB.INSTRUMENT_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..INSTRUMENT_TYPE) src_rows, (SELECT COUNT(*) FROM INSTRUMENT_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_INSTRUMENT_TYPE WHERE ORA_ERR_TAG$ = 'ISB.INSTRUMENT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'COMPANY_BANK' tgt, 'KHI.COMPANY_BANK' src, (SELECT COUNT(*) FROM &&KHI_SCH..COMPANY_BANK) src_rows, (SELECT COUNT(*) FROM COMPANY_BANK WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_COMPANY_BANK WHERE ORA_ERR_TAG$ = 'KHI.COMPANY_BANK') err_rows FROM dual
+UNION ALL
+SELECT 'COMPANY_BANK' tgt, 'ISB.COMPANY_BANK' src, (SELECT COUNT(*) FROM &&ISB_SCH..COMPANY_BANK) src_rows, (SELECT COUNT(*) FROM COMPANY_BANK WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_COMPANY_BANK WHERE ORA_ERR_TAG$ = 'ISB.COMPANY_BANK') err_rows FROM dual
+UNION ALL
+SELECT 'TRANSPORTER_DESC' tgt, 'KHI.TRANSPORTER_DESC' src, (SELECT COUNT(*) FROM &&KHI_SCH..TRANSPORTER_DESC) src_rows, (SELECT COUNT(*) FROM TRANSPORTER_DESC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TRANSPORTER_DESC WHERE ORA_ERR_TAG$ = 'KHI.TRANSPORTER_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'TRANSPORTER_DESC' tgt, 'ISB.TRANSPORTER_DESC' src, (SELECT COUNT(*) FROM &&ISB_SCH..TRANSPORTER_DESC) src_rows, (SELECT COUNT(*) FROM TRANSPORTER_DESC WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TRANSPORTER_DESC WHERE ORA_ERR_TAG$ = 'ISB.TRANSPORTER_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'PRODUCT_TYPE' tgt, 'KHI.PRODUCT_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRODUCT_TYPE) src_rows, (SELECT COUNT(*) FROM PRODUCT_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRODUCT_TYPE WHERE ORA_ERR_TAG$ = 'KHI.PRODUCT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'PRODUCT_TYPE' tgt, 'ISB.PRODUCT_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..PRODUCT_TYPE) src_rows, (SELECT COUNT(*) FROM PRODUCT_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRODUCT_TYPE WHERE ORA_ERR_TAG$ = 'ISB.PRODUCT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'PRODUCT_DESC_T' tgt, 'KHI.PRODUCT_DESC_T' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRODUCT_DESC_T) src_rows, (SELECT COUNT(*) FROM PRODUCT_DESC_T WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRODUCT_DESC_T WHERE ORA_ERR_TAG$ = 'KHI.PRODUCT_DESC_T') err_rows FROM dual
+UNION ALL
+SELECT 'PRODUCT_DESC_T' tgt, 'ISB.PRODUCT_DESC_T' src, (SELECT COUNT(*) FROM &&ISB_SCH..PRODUCT_DESC_T) src_rows, (SELECT COUNT(*) FROM PRODUCT_DESC_T WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRODUCT_DESC_T WHERE ORA_ERR_TAG$ = 'ISB.PRODUCT_DESC_T') err_rows FROM dual
+UNION ALL
+SELECT 'PRODUCT_DESC_DTL' tgt, 'KHI.PRODUCT_DESC_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRODUCT_DESC_DTL) src_rows, (SELECT COUNT(*) FROM PRODUCT_DESC_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRODUCT_DESC_DTL WHERE ORA_ERR_TAG$ = 'KHI.PRODUCT_DESC_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'BAG' tgt, 'KHI.BAG' src, (SELECT COUNT(*) FROM &&KHI_SCH..BAG) src_rows, (SELECT COUNT(*) FROM BAG WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BAG WHERE ORA_ERR_TAG$ = 'KHI.BAG') err_rows FROM dual
+UNION ALL
+SELECT 'BAG' tgt, 'ISB.BAGS_MASTER' src, (SELECT COUNT(*) FROM &&ISB_SCH..BAGS_MASTER) src_rows, (SELECT COUNT(*) FROM BAG WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_BAG WHERE ORA_ERR_TAG$ = 'ISB.BAGS_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_ORDER_TYPE' tgt, 'KHI.DELIVERY_ORDER_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..DELIVERY_ORDER_TYPE) src_rows, (SELECT COUNT(*) FROM DELIVERY_ORDER_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_ORDER_TYPE WHERE ORA_ERR_TAG$ = 'KHI.DELIVERY_ORDER_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_ORDER_TYPE' tgt, 'ISB.DELIVERY_ORDER_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..DELIVERY_ORDER_TYPE) src_rows, (SELECT COUNT(*) FROM DELIVERY_ORDER_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_ORDER_TYPE WHERE ORA_ERR_TAG$ = 'ISB.DELIVERY_ORDER_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_MASTER' tgt, 'KHI.CUSTOMER_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_MASTER) src_rows, (SELECT COUNT(*) FROM CUSTOMER_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_MASTER WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_INFO' tgt, 'KHI.CUSTOMER_INFO' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_INFO) src_rows, (SELECT COUNT(*) FROM CUSTOMER_INFO WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_INFO WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_INFO') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_INFO' tgt, 'ISB.CUSTOMER_INFO' src, (SELECT COUNT(*) FROM &&ISB_SCH..CUSTOMER_INFO) src_rows, (SELECT COUNT(*) FROM CUSTOMER_INFO WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_INFO WHERE ORA_ERR_TAG$ = 'ISB.CUSTOMER_INFO') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_AREA' tgt, 'KHI.CUSTOMER_AREA' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_AREA) src_rows, (SELECT COUNT(*) FROM CUSTOMER_AREA WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_AREA WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_AREA') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_AREA' tgt, 'ISB.CUSTOMER_AREA' src, (SELECT COUNT(*) FROM &&ISB_SCH..CUSTOMER_AREA) src_rows, (SELECT COUNT(*) FROM CUSTOMER_AREA WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_AREA WHERE ORA_ERR_TAG$ = 'ISB.CUSTOMER_AREA') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_BANK_ACC' tgt, 'KHI.CUSTOMER_BANK_ACC' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_BANK_ACC) src_rows, (SELECT COUNT(*) FROM CUSTOMER_BANK_ACC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_BANK_ACC WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_BANK_ACC') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_BANK_ACC' tgt, 'ISB.CUSTOMER_BANK_ACC' src, (SELECT COUNT(*) FROM &&ISB_SCH..CUSTOMER_BANK_ACC) src_rows, (SELECT COUNT(*) FROM CUSTOMER_BANK_ACC WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_BANK_ACC WHERE ORA_ERR_TAG$ = 'ISB.CUSTOMER_BANK_ACC') err_rows FROM dual
+UNION ALL
+SELECT 'SECURITY_DEPOSIT' tgt, 'KHI.SECURITY_DEPOSIT' src, (SELECT COUNT(*) FROM &&KHI_SCH..SECURITY_DEPOSIT) src_rows, (SELECT COUNT(*) FROM SECURITY_DEPOSIT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SECURITY_DEPOSIT WHERE ORA_ERR_TAG$ = 'KHI.SECURITY_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'SECURITY_DEPOSIT' tgt, 'ISB.SECURITY_DEPOSIT' src, (SELECT COUNT(*) FROM &&ISB_SCH..SECURITY_DEPOSIT) src_rows, (SELECT COUNT(*) FROM SECURITY_DEPOSIT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SECURITY_DEPOSIT WHERE ORA_ERR_TAG$ = 'ISB.SECURITY_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'CSECURITY_DEPOSIT' tgt, 'KHI.CSECURITY_DEPOSIT' src, (SELECT COUNT(*) FROM &&KHI_SCH..CSECURITY_DEPOSIT) src_rows, (SELECT COUNT(*) FROM CSECURITY_DEPOSIT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CSECURITY_DEPOSIT WHERE ORA_ERR_TAG$ = 'KHI.CSECURITY_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'CSECURITY_DEPOSIT' tgt, 'ISB.CSECURITY_DEPOSIT' src, (SELECT COUNT(*) FROM &&ISB_SCH..CSECURITY_DEPOSIT) src_rows, (SELECT COUNT(*) FROM CSECURITY_DEPOSIT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CSECURITY_DEPOSIT WHERE ORA_ERR_TAG$ = 'ISB.CSECURITY_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'BLOCK_CUSTOMER' tgt, 'KHI.BLOCK_CUSTOMER' src, (SELECT COUNT(*) FROM &&KHI_SCH..BLOCK_CUSTOMER) src_rows, (SELECT COUNT(*) FROM BLOCK_CUSTOMER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BLOCK_CUSTOMER WHERE ORA_ERR_TAG$ = 'KHI.BLOCK_CUSTOMER') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_LIMITS' tgt, 'KHI.CREDIT_LIMITS' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_LIMITS) src_rows, (SELECT COUNT(*) FROM CREDIT_LIMITS WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_LIMITS WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_LIMITS') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_LIMITS' tgt, 'ISB.CREDIT_LIMITS' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_LIMITS) src_rows, (SELECT COUNT(*) FROM CREDIT_LIMITS WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_LIMITS WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_LIMITS') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_LIMITS_F' tgt, 'KHI.CREDIT_LIMITS_F' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_LIMITS_F) src_rows, (SELECT COUNT(*) FROM CREDIT_LIMITS_F WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_LIMITS_F WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_LIMITS_F') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_LIMITS_F' tgt, 'ISB.CREDIT_LIMITS_F' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_LIMITS_F) src_rows, (SELECT COUNT(*) FROM CREDIT_LIMITS_F WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_LIMITS_F WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_LIMITS_F') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_APP_MASTER' tgt, 'KHI.CREDIT_APP_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_APP_MASTER) src_rows, (SELECT COUNT(*) FROM CREDIT_APP_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_APP_MASTER WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_APP_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_APP_MASTER' tgt, 'ISB.CREDIT_APP_MASTER' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_APP_MASTER) src_rows, (SELECT COUNT(*) FROM CREDIT_APP_MASTER WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_APP_MASTER WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_APP_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_APP_DETAIL' tgt, 'KHI.CREDIT_APP_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_APP_DETAIL) src_rows, (SELECT COUNT(*) FROM CREDIT_APP_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_APP_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_APP_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_APP_DETAIL' tgt, 'ISB.CREDIT_APP_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_APP_DETAIL) src_rows, (SELECT COUNT(*) FROM CREDIT_APP_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_APP_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_APP_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_CREDIT_APP' tgt, 'KHI.CUSTOMER_CREDIT_APP' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_CREDIT_APP) src_rows, (SELECT COUNT(*) FROM CUSTOMER_CREDIT_APP WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_CREDIT_APP WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_CREDIT_APP') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_CREDIT_APP' tgt, 'ISB.CUSTOMER_CREDIT_APP' src, (SELECT COUNT(*) FROM &&ISB_SCH..CUSTOMER_CREDIT_APP) src_rows, (SELECT COUNT(*) FROM CUSTOMER_CREDIT_APP WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_CREDIT_APP WHERE ORA_ERR_TAG$ = 'ISB.CUSTOMER_CREDIT_APP') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_MONITOR' tgt, 'ISB.CREDIT_MONITOR' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_MONITOR) src_rows, (SELECT COUNT(*) FROM CREDIT_MONITOR WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_MONITOR WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_MONITOR') err_rows FROM dual
+UNION ALL
+SELECT 'TRADE_PRICE' tgt, 'KHI.TRADE_PRICE' src, (SELECT COUNT(*) FROM &&KHI_SCH..TRADE_PRICE) src_rows, (SELECT COUNT(*) FROM TRADE_PRICE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TRADE_PRICE WHERE ORA_ERR_TAG$ = 'KHI.TRADE_PRICE') err_rows FROM dual
+UNION ALL
+SELECT 'TRADE_PRICE' tgt, 'ISB.TRADE_PRICE' src, (SELECT COUNT(*) FROM &&ISB_SCH..TRADE_PRICE) src_rows, (SELECT COUNT(*) FROM TRADE_PRICE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TRADE_PRICE WHERE ORA_ERR_TAG$ = 'ISB.TRADE_PRICE') err_rows FROM dual
+UNION ALL
+SELECT 'OC_PRICE_DTL' tgt, 'ISB.OC_PRICE_DTL' src, (SELECT COUNT(*) FROM &&ISB_SCH..OC_PRICE_DTL) src_rows, (SELECT COUNT(*) FROM OC_PRICE_DTL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_OC_PRICE_DTL WHERE ORA_ERR_TAG$ = 'ISB.OC_PRICE_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_M' tgt, 'KHI.AREA_RATES_M' src, (SELECT COUNT(*) FROM &&KHI_SCH..AREA_RATES_M) src_rows, (SELECT COUNT(*) FROM AREA_RATES_M WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_M WHERE ORA_ERR_TAG$ = 'KHI.AREA_RATES_M') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_M' tgt, 'ISB.AREA_RATES_M' src, (SELECT COUNT(*) FROM &&ISB_SCH..AREA_RATES_M) src_rows, (SELECT COUNT(*) FROM AREA_RATES_M WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_M WHERE ORA_ERR_TAG$ = 'ISB.AREA_RATES_M') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_P' tgt, 'KHI.AREA_RATES_P' src, (SELECT COUNT(*) FROM &&KHI_SCH..AREA_RATES_P) src_rows, (SELECT COUNT(*) FROM AREA_RATES_P WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_P WHERE ORA_ERR_TAG$ = 'KHI.AREA_RATES_P') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_P' tgt, 'ISB.AREA_RATES_P' src, (SELECT COUNT(*) FROM &&ISB_SCH..AREA_RATES_P) src_rows, (SELECT COUNT(*) FROM AREA_RATES_P WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_P WHERE ORA_ERR_TAG$ = 'ISB.AREA_RATES_P') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_D' tgt, 'KHI.AREA_RATES_D' src, (SELECT COUNT(*) FROM &&KHI_SCH..AREA_RATES_D) src_rows, (SELECT COUNT(*) FROM AREA_RATES_D WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_D WHERE ORA_ERR_TAG$ = 'KHI.AREA_RATES_D') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_D' tgt, 'ISB.AREA_RATES_D' src, (SELECT COUNT(*) FROM &&ISB_SCH..AREA_RATES_D) src_rows, (SELECT COUNT(*) FROM AREA_RATES_D WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_D WHERE ORA_ERR_TAG$ = 'ISB.AREA_RATES_D') err_rows FROM dual
+UNION ALL
+SELECT 'ZONE_CITY_FRIEGHT_M' tgt, 'ISB.ZONE_CITY_FRIEGHT_M' src, (SELECT COUNT(*) FROM &&ISB_SCH..ZONE_CITY_FRIEGHT_M) src_rows, (SELECT COUNT(*) FROM ZONE_CITY_FRIEGHT_M WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ZONE_CITY_FRIEGHT_M WHERE ORA_ERR_TAG$ = 'ISB.ZONE_CITY_FRIEGHT_M') err_rows FROM dual
+UNION ALL
+SELECT 'ZONE_CITY_FRIEGHT_D' tgt, 'ISB.ZONE_CITY_FRIEGHT_D' src, (SELECT COUNT(*) FROM &&ISB_SCH..ZONE_CITY_FRIEGHT_D) src_rows, (SELECT COUNT(*) FROM ZONE_CITY_FRIEGHT_D WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ZONE_CITY_FRIEGHT_D WHERE ORA_ERR_TAG$ = 'ISB.ZONE_CITY_FRIEGHT_D') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_MST' tgt, 'KHI.TARGET_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..TARGET_MST) src_rows, (SELECT COUNT(*) FROM TARGET_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_MST WHERE ORA_ERR_TAG$ = 'KHI.TARGET_MST') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_MST' tgt, 'ISB.TARGET_MST' src, (SELECT COUNT(*) FROM &&ISB_SCH..TARGET_MST) src_rows, (SELECT COUNT(*) FROM TARGET_MST WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_MST WHERE ORA_ERR_TAG$ = 'ISB.TARGET_MST') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_CUST' tgt, 'KHI.TARGET_CUST' src, (SELECT COUNT(*) FROM &&KHI_SCH..TARGET_CUST) src_rows, (SELECT COUNT(*) FROM TARGET_CUST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_CUST WHERE ORA_ERR_TAG$ = 'KHI.TARGET_CUST') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_CUST' tgt, 'ISB.TARGET_CUST' src, (SELECT COUNT(*) FROM &&ISB_SCH..TARGET_CUST) src_rows, (SELECT COUNT(*) FROM TARGET_CUST WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_CUST WHERE ORA_ERR_TAG$ = 'ISB.TARGET_CUST') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_CUST_AREA' tgt, 'KHI.TARGET_CUST_AREA' src, (SELECT COUNT(*) FROM &&KHI_SCH..TARGET_CUST_AREA) src_rows, (SELECT COUNT(*) FROM TARGET_CUST_AREA WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_CUST_AREA WHERE ORA_ERR_TAG$ = 'KHI.TARGET_CUST_AREA') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_CUST_AREA' tgt, 'ISB.TARGET_CUST_AREA' src, (SELECT COUNT(*) FROM &&ISB_SCH..TARGET_CUST_AREA) src_rows, (SELECT COUNT(*) FROM TARGET_CUST_AREA WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_CUST_AREA WHERE ORA_ERR_TAG$ = 'ISB.TARGET_CUST_AREA') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_DTL_CTY' tgt, 'KHI.TARGET_DTL_CTY' src, (SELECT COUNT(*) FROM &&KHI_SCH..TARGET_DTL_CTY) src_rows, (SELECT COUNT(*) FROM TARGET_DTL_CTY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_DTL_CTY WHERE ORA_ERR_TAG$ = 'KHI.TARGET_DTL_CTY') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_PERC_MST' tgt, 'ISB.TARGET_PERC_MST' src, (SELECT COUNT(*) FROM &&ISB_SCH..TARGET_PERC_MST) src_rows, (SELECT COUNT(*) FROM TARGET_PERC_MST WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_PERC_MST WHERE ORA_ERR_TAG$ = 'ISB.TARGET_PERC_MST') err_rows FROM dual
+UNION ALL
+SELECT 'TARGET_PERC_DTL' tgt, 'ISB.TARGET_PERC_DTL' src, (SELECT COUNT(*) FROM &&ISB_SCH..TARGET_PERC_DTL) src_rows, (SELECT COUNT(*) FROM TARGET_PERC_DTL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TARGET_PERC_DTL WHERE ORA_ERR_TAG$ = 'ISB.TARGET_PERC_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'INCENTIVE' tgt, 'KHI.INCENTIVE' src, (SELECT COUNT(*) FROM &&KHI_SCH..INCENTIVE) src_rows, (SELECT COUNT(*) FROM INCENTIVE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_INCENTIVE WHERE ORA_ERR_TAG$ = 'KHI.INCENTIVE') err_rows FROM dual
+UNION ALL
+SELECT 'INCENTIVE' tgt, 'ISB.INCENTIVE' src, (SELECT COUNT(*) FROM &&ISB_SCH..INCENTIVE) src_rows, (SELECT COUNT(*) FROM INCENTIVE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_INCENTIVE WHERE ORA_ERR_TAG$ = 'ISB.INCENTIVE') err_rows FROM dual
+UNION ALL
+SELECT 'INCENTIVE_PRODUCT' tgt, 'KHI.INCENTIVE_PRODUCT' src, (SELECT COUNT(*) FROM &&KHI_SCH..INCENTIVE_PRODUCT) src_rows, (SELECT COUNT(*) FROM INCENTIVE_PRODUCT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_INCENTIVE_PRODUCT WHERE ORA_ERR_TAG$ = 'KHI.INCENTIVE_PRODUCT') err_rows FROM dual
+UNION ALL
+SELECT 'INCENTIVE_PRODUCT' tgt, 'ISB.INCENTIVE_PRODUCT' src, (SELECT COUNT(*) FROM &&ISB_SCH..INCENTIVE_PRODUCT) src_rows, (SELECT COUNT(*) FROM INCENTIVE_PRODUCT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_INCENTIVE_PRODUCT WHERE ORA_ERR_TAG$ = 'ISB.INCENTIVE_PRODUCT') err_rows FROM dual
+UNION ALL
+SELECT 'INCENTIVE_DETAIL' tgt, 'KHI.INCENTIVE_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..INCENTIVE_DETAIL) src_rows, (SELECT COUNT(*) FROM INCENTIVE_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_INCENTIVE_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.INCENTIVE_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'INCENTIVE_DETAIL' tgt, 'ISB.INCENTIVE_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..INCENTIVE_DETAIL) src_rows, (SELECT COUNT(*) FROM INCENTIVE_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_INCENTIVE_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.INCENTIVE_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_REQUEST_MASTER' tgt, 'KHI.SALES_REQUEST_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..SALES_REQUEST_MASTER) src_rows, (SELECT COUNT(*) FROM SALES_REQUEST_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_REQUEST_MASTER WHERE ORA_ERR_TAG$ = 'KHI.SALES_REQUEST_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_REQUEST_MASTER' tgt, 'ISB.SALES_REQUEST_MASTER' src, (SELECT COUNT(*) FROM &&ISB_SCH..SALES_REQUEST_MASTER) src_rows, (SELECT COUNT(*) FROM SALES_REQUEST_MASTER WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_REQUEST_MASTER WHERE ORA_ERR_TAG$ = 'ISB.SALES_REQUEST_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_REQUEST_DETAIL' tgt, 'KHI.SALES_REQUEST_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..SALES_REQUEST_DETAIL) src_rows, (SELECT COUNT(*) FROM SALES_REQUEST_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_REQUEST_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.SALES_REQUEST_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'SALES_REQUEST_DETAIL' tgt, 'ISB.SALES_REQUEST_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..SALES_REQUEST_DETAIL) src_rows, (SELECT COUNT(*) FROM SALES_REQUEST_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SALES_REQUEST_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.SALES_REQUEST_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CONFIRM' tgt, 'KHI.ORDER_CONFIRM' src, (SELECT COUNT(*) FROM &&KHI_SCH..ORDER_CONFIRM) src_rows, (SELECT COUNT(*) FROM ORDER_CONFIRM WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CONFIRM WHERE ORA_ERR_TAG$ = 'KHI.ORDER_CONFIRM') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CONFIRM' tgt, 'ISB.ORDER_CONFIRM' src, (SELECT COUNT(*) FROM &&ISB_SCH..ORDER_CONFIRM) src_rows, (SELECT COUNT(*) FROM ORDER_CONFIRM WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CONFIRM WHERE ORA_ERR_TAG$ = 'ISB.ORDER_CONFIRM') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CONFIRM_DETAIL' tgt, 'KHI.ORDER_CONFIRM_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..ORDER_CONFIRM_DETAIL) src_rows, (SELECT COUNT(*) FROM ORDER_CONFIRM_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CONFIRM_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.ORDER_CONFIRM_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CONFIRM_DETAIL' tgt, 'ISB.ORDER_CONFIRM_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..ORDER_CONFIRM_DETAIL) src_rows, (SELECT COUNT(*) FROM ORDER_CONFIRM_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CONFIRM_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.ORDER_CONFIRM_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'CASH_CHEQUE_RECEIPTS' tgt, 'KHI.CASH_CHEQUE_RECEIPTS' src, (SELECT COUNT(*) FROM &&KHI_SCH..CASH_CHEQUE_RECEIPTS) src_rows, (SELECT COUNT(*) FROM CASH_CHEQUE_RECEIPTS WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CASH_CHEQUE_RECEIPTS WHERE ORA_ERR_TAG$ = 'KHI.CASH_CHEQUE_RECEIPTS') err_rows FROM dual
+UNION ALL
+SELECT 'CASH_CHEQUE_RECEIPTS' tgt, 'ISB.CASH_CHEQUE_RECEIPTS' src, (SELECT COUNT(*) FROM &&ISB_SCH..CASH_CHEQUE_RECEIPTS) src_rows, (SELECT COUNT(*) FROM CASH_CHEQUE_RECEIPTS WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CASH_CHEQUE_RECEIPTS WHERE ORA_ERR_TAG$ = 'ISB.CASH_CHEQUE_RECEIPTS') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CONFIRM_BRV' tgt, 'KHI.ORDER_CONFIRM_BRV' src, (SELECT COUNT(*) FROM &&KHI_SCH..ORDER_CONFIRM_BRV) src_rows, (SELECT COUNT(*) FROM ORDER_CONFIRM_BRV WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CONFIRM_BRV WHERE ORA_ERR_TAG$ = 'KHI.ORDER_CONFIRM_BRV') err_rows FROM dual
+UNION ALL
+SELECT 'BRV_DTL' tgt, 'KHI.BRV_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..BRV_DTL) src_rows, (SELECT COUNT(*) FROM BRV_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BRV_DTL WHERE ORA_ERR_TAG$ = 'KHI.BRV_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'BANK_DEPOSIT' tgt, 'KHI.BANK_DEPOSIT' src, (SELECT COUNT(*) FROM &&KHI_SCH..BANK_DEPOSIT) src_rows, (SELECT COUNT(*) FROM BANK_DEPOSIT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BANK_DEPOSIT WHERE ORA_ERR_TAG$ = 'KHI.BANK_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'BANK_DEPOSIT' tgt, 'ISB.BANK_DEPOSIT' src, (SELECT COUNT(*) FROM &&ISB_SCH..BANK_DEPOSIT) src_rows, (SELECT COUNT(*) FROM BANK_DEPOSIT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_BANK_DEPOSIT WHERE ORA_ERR_TAG$ = 'ISB.BANK_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'BANK_DEPOSIT1' tgt, 'KHI.BANK_DEPOSIT1' src, (SELECT COUNT(*) FROM &&KHI_SCH..BANK_DEPOSIT1) src_rows, (SELECT COUNT(*) FROM BANK_DEPOSIT1 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BANK_DEPOSIT1 WHERE ORA_ERR_TAG$ = 'KHI.BANK_DEPOSIT1') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_MST_CITY' tgt, 'KHI.PERMIT_MST_CITY' src, (SELECT COUNT(*) FROM &&KHI_SCH..PERMIT_MST_CITY) src_rows, (SELECT COUNT(*) FROM PERMIT_MST_CITY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_MST_CITY WHERE ORA_ERR_TAG$ = 'KHI.PERMIT_MST_CITY') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_MST_CITY' tgt, 'ISB.PERMIT_MST_CITY' src, (SELECT COUNT(*) FROM &&ISB_SCH..PERMIT_MST_CITY) src_rows, (SELECT COUNT(*) FROM PERMIT_MST_CITY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_MST_CITY WHERE ORA_ERR_TAG$ = 'ISB.PERMIT_MST_CITY') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_DTL_CITY' tgt, 'KHI.PERMIT_DTL_CITY' src, (SELECT COUNT(*) FROM &&KHI_SCH..PERMIT_DTL_CITY) src_rows, (SELECT COUNT(*) FROM PERMIT_DTL_CITY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_DTL_CITY WHERE ORA_ERR_TAG$ = 'KHI.PERMIT_DTL_CITY') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_DTL_CITY' tgt, 'ISB.PERMIT_DTL_CITY' src, (SELECT COUNT(*) FROM &&ISB_SCH..PERMIT_DTL_CITY) src_rows, (SELECT COUNT(*) FROM PERMIT_DTL_CITY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_DTL_CITY WHERE ORA_ERR_TAG$ = 'ISB.PERMIT_DTL_CITY') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_ADJ_CITY' tgt, 'KHI.PERMIT_ADJ_CITY' src, (SELECT COUNT(*) FROM &&KHI_SCH..PERMIT_ADJ_CITY) src_rows, (SELECT COUNT(*) FROM PERMIT_ADJ_CITY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_ADJ_CITY WHERE ORA_ERR_TAG$ = 'KHI.PERMIT_ADJ_CITY') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_ADJ_CITY' tgt, 'ISB.PERMIT_ADJ_CITY' src, (SELECT COUNT(*) FROM &&ISB_SCH..PERMIT_ADJ_CITY) src_rows, (SELECT COUNT(*) FROM PERMIT_ADJ_CITY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_ADJ_CITY WHERE ORA_ERR_TAG$ = 'ISB.PERMIT_ADJ_CITY') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_ORDER' tgt, 'KHI.DELIVERY_ORDER' src, (SELECT COUNT(*) FROM &&KHI_SCH..DELIVERY_ORDER) src_rows, (SELECT COUNT(*) FROM DELIVERY_ORDER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_ORDER WHERE ORA_ERR_TAG$ = 'KHI.DELIVERY_ORDER') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_ORDER' tgt, 'ISB.DELIVERY_ORDER' src, (SELECT COUNT(*) FROM &&ISB_SCH..DELIVERY_ORDER) src_rows, (SELECT COUNT(*) FROM DELIVERY_ORDER WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_ORDER WHERE ORA_ERR_TAG$ = 'ISB.DELIVERY_ORDER') err_rows FROM dual
+UNION ALL
+SELECT 'DO_ADJUSTMENT' tgt, 'KHI.DO_ADJUSTMENT' src, (SELECT COUNT(*) FROM &&KHI_SCH..DO_ADJUSTMENT) src_rows, (SELECT COUNT(*) FROM DO_ADJUSTMENT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DO_ADJUSTMENT WHERE ORA_ERR_TAG$ = 'KHI.DO_ADJUSTMENT') err_rows FROM dual
+UNION ALL
+SELECT 'DO_ADJUSTMENT' tgt, 'ISB.DO_ADJUSTMENT' src, (SELECT COUNT(*) FROM &&ISB_SCH..DO_ADJUSTMENT) src_rows, (SELECT COUNT(*) FROM DO_ADJUSTMENT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DO_ADJUSTMENT WHERE ORA_ERR_TAG$ = 'ISB.DO_ADJUSTMENT') err_rows FROM dual
+UNION ALL
+SELECT 'FH_DELIVERY_CHALLAN' tgt, 'KHI.FH_DELIVERY_CHALLAN' src, (SELECT COUNT(*) FROM &&KHI_SCH..FH_DELIVERY_CHALLAN) src_rows, (SELECT COUNT(*) FROM FH_DELIVERY_CHALLAN WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_FH_DELIVERY_CHALLAN WHERE ORA_ERR_TAG$ = 'KHI.FH_DELIVERY_CHALLAN') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_CHALLAN_OLD' tgt, 'KHI.DELIVERY_CHALLAN_OLD' src, (SELECT COUNT(*) FROM &&KHI_SCH..DELIVERY_CHALLAN_OLD) src_rows, (SELECT COUNT(*) FROM DELIVERY_CHALLAN_OLD WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_CHALLAN_OLD WHERE ORA_ERR_TAG$ = 'KHI.DELIVERY_CHALLAN_OLD') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_CHALLAN_OLD' tgt, 'ISB.DELIVERY_CHALLAN_OLD' src, (SELECT COUNT(*) FROM &&ISB_SCH..DELIVERY_CHALLAN_OLD) src_rows, (SELECT COUNT(*) FROM DELIVERY_CHALLAN_OLD WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_CHALLAN_OLD WHERE ORA_ERR_TAG$ = 'ISB.DELIVERY_CHALLAN_OLD') err_rows FROM dual
+UNION ALL
+SELECT 'FH_DEL_CHALLAN_DETAIL' tgt, 'KHI.FH_DEL_CHALLAN_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..FH_DEL_CHALLAN_DETAIL) src_rows, (SELECT COUNT(*) FROM FH_DEL_CHALLAN_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_FH_DEL_CHALLAN_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.FH_DEL_CHALLAN_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'DEL_CHALLAN_DETAIL_OLD' tgt, 'KHI.DEL_CHALLAN_DETAIL_OLD' src, (SELECT COUNT(*) FROM &&KHI_SCH..DEL_CHALLAN_DETAIL_OLD) src_rows, (SELECT COUNT(*) FROM DEL_CHALLAN_DETAIL_OLD WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DEL_CHALLAN_DETAIL_OLD WHERE ORA_ERR_TAG$ = 'KHI.DEL_CHALLAN_DETAIL_OLD') err_rows FROM dual
+UNION ALL
+SELECT 'DEL_CHALLAN_DETAIL_OLD' tgt, 'ISB.DEL_CHALLAN_DETAIL_OLD' src, (SELECT COUNT(*) FROM &&ISB_SCH..DEL_CHALLAN_DETAIL_OLD) src_rows, (SELECT COUNT(*) FROM DEL_CHALLAN_DETAIL_OLD WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DEL_CHALLAN_DETAIL_OLD WHERE ORA_ERR_TAG$ = 'ISB.DEL_CHALLAN_DETAIL_OLD') err_rows FROM dual
+UNION ALL
+SELECT 'FH_DELIVERY_MEMO' tgt, 'KHI.FH_DELIVERY_MEMO' src, (SELECT COUNT(*) FROM &&KHI_SCH..FH_DELIVERY_MEMO) src_rows, (SELECT COUNT(*) FROM FH_DELIVERY_MEMO WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_FH_DELIVERY_MEMO WHERE ORA_ERR_TAG$ = 'KHI.FH_DELIVERY_MEMO') err_rows FROM dual
+UNION ALL
+SELECT 'DELIVERY_MEMO_OLD' tgt, 'ISB.DELIVERY_MEMO_OLD' src, (SELECT COUNT(*) FROM &&ISB_SCH..DELIVERY_MEMO_OLD) src_rows, (SELECT COUNT(*) FROM DELIVERY_MEMO_OLD WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DELIVERY_MEMO_OLD WHERE ORA_ERR_TAG$ = 'ISB.DELIVERY_MEMO_OLD') err_rows FROM dual
+UNION ALL
+SELECT 'FH_DC_DOCUMENT' tgt, 'KHI.FH_DC_DOCUMENT' src, (SELECT COUNT(*) FROM &&KHI_SCH..FH_DC_DOCUMENT) src_rows, (SELECT COUNT(*) FROM FH_DC_DOCUMENT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_FH_DC_DOCUMENT WHERE ORA_ERR_TAG$ = 'KHI.FH_DC_DOCUMENT') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_NOTE' tgt, 'KHI.CREDIT_NOTE' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_NOTE) src_rows, (SELECT COUNT(*) FROM CREDIT_NOTE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_NOTE WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_NOTE') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_NOTE' tgt, 'ISB.CREDIT_NOTE' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_NOTE) src_rows, (SELECT COUNT(*) FROM CREDIT_NOTE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_NOTE WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_NOTE') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_NOTE_DETAIL' tgt, 'KHI.CREDIT_NOTE_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_NOTE_DETAIL) src_rows, (SELECT COUNT(*) FROM CREDIT_NOTE_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_NOTE_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_NOTE_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_NOTE_DETAIL' tgt, 'ISB.CREDIT_NOTE_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..CREDIT_NOTE_DETAIL) src_rows, (SELECT COUNT(*) FROM CREDIT_NOTE_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_NOTE_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.CREDIT_NOTE_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CANCEL_MASTER' tgt, 'KHI.ORDER_CANCEL_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..ORDER_CANCEL_MASTER) src_rows, (SELECT COUNT(*) FROM ORDER_CANCEL_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CANCEL_MASTER WHERE ORA_ERR_TAG$ = 'KHI.ORDER_CANCEL_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CANCEL_MASTER' tgt, 'ISB.ORDER_CANCEL_MASTER' src, (SELECT COUNT(*) FROM &&ISB_SCH..ORDER_CANCEL_MASTER) src_rows, (SELECT COUNT(*) FROM ORDER_CANCEL_MASTER WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CANCEL_MASTER WHERE ORA_ERR_TAG$ = 'ISB.ORDER_CANCEL_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CANCEL_DETAIL' tgt, 'KHI.ORDER_CANCEL_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..ORDER_CANCEL_DETAIL) src_rows, (SELECT COUNT(*) FROM ORDER_CANCEL_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CANCEL_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.ORDER_CANCEL_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CANCEL_DETAIL' tgt, 'ISB.ORDER_CANCEL_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..ORDER_CANCEL_DETAIL) src_rows, (SELECT COUNT(*) FROM ORDER_CANCEL_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CANCEL_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.ORDER_CANCEL_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'SD_OCA_MST' tgt, 'KHI.SD_OCA_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..SD_OCA_MST) src_rows, (SELECT COUNT(*) FROM SD_OCA_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SD_OCA_MST WHERE ORA_ERR_TAG$ = 'KHI.SD_OCA_MST') err_rows FROM dual
+UNION ALL
+SELECT 'SD_OCA_DTL' tgt, 'KHI.SD_OCA_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..SD_OCA_DTL) src_rows, (SELECT COUNT(*) FROM SD_OCA_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SD_OCA_DTL WHERE ORA_ERR_TAG$ = 'KHI.SD_OCA_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'RECEIPT_CANCEL_MASTER' tgt, 'KHI.RECEIPT_CANCEL_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..RECEIPT_CANCEL_MASTER) src_rows, (SELECT COUNT(*) FROM RECEIPT_CANCEL_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RECEIPT_CANCEL_MASTER WHERE ORA_ERR_TAG$ = 'KHI.RECEIPT_CANCEL_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'RECEIPT_CANCEL_MASTER' tgt, 'ISB.RECEIPT_CANCEL_MASTER' src, (SELECT COUNT(*) FROM &&ISB_SCH..RECEIPT_CANCEL_MASTER) src_rows, (SELECT COUNT(*) FROM RECEIPT_CANCEL_MASTER WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_RECEIPT_CANCEL_MASTER WHERE ORA_ERR_TAG$ = 'ISB.RECEIPT_CANCEL_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'RECEIPT_CANCEL_DETAIL' tgt, 'KHI.RECEIPT_CANCEL_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..RECEIPT_CANCEL_DETAIL) src_rows, (SELECT COUNT(*) FROM RECEIPT_CANCEL_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RECEIPT_CANCEL_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.RECEIPT_CANCEL_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'RECEIPT_CANCEL_DETAIL' tgt, 'ISB.RECEIPT_CANCEL_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..RECEIPT_CANCEL_DETAIL) src_rows, (SELECT COUNT(*) FROM RECEIPT_CANCEL_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_RECEIPT_CANCEL_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.RECEIPT_CANCEL_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'BRV_CANCEL_DTL' tgt, 'KHI.BRV_CANCEL_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..BRV_CANCEL_DTL) src_rows, (SELECT COUNT(*) FROM BRV_CANCEL_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BRV_CANCEL_DTL WHERE ORA_ERR_TAG$ = 'KHI.BRV_CANCEL_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'OPENING_BALANCES' tgt, 'KHI.OPENING_BALANCES' src, (SELECT COUNT(*) FROM &&KHI_SCH..OPENING_BALANCES) src_rows, (SELECT COUNT(*) FROM OPENING_BALANCES WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_OPENING_BALANCES WHERE ORA_ERR_TAG$ = 'KHI.OPENING_BALANCES') err_rows FROM dual
+UNION ALL
+SELECT 'OPENING_BALANCES' tgt, 'ISB.OPENING_BALANCES' src, (SELECT COUNT(*) FROM &&ISB_SCH..OPENING_BALANCES) src_rows, (SELECT COUNT(*) FROM OPENING_BALANCES WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_OPENING_BALANCES WHERE ORA_ERR_TAG$ = 'ISB.OPENING_BALANCES') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_OPEN_BALANCE' tgt, 'KHI.CUSTOMER_OPEN_BALANCE' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMER_OPEN_BALANCE) src_rows, (SELECT COUNT(*) FROM CUSTOMER_OPEN_BALANCE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_OPEN_BALANCE WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMER_OPEN_BALANCE') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMER_OPEN_BALANCE' tgt, 'ISB.CUSTOMER_OPEN_BALANCE' src, (SELECT COUNT(*) FROM &&ISB_SCH..CUSTOMER_OPEN_BALANCE) src_rows, (SELECT COUNT(*) FROM CUSTOMER_OPEN_BALANCE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMER_OPEN_BALANCE WHERE ORA_ERR_TAG$ = 'ISB.CUSTOMER_OPEN_BALANCE') err_rows FROM dual
+UNION ALL
+SELECT 'DC_ADJ_1' tgt, 'KHI.DC_ADJ_1' src, (SELECT COUNT(*) FROM &&KHI_SCH..DC_ADJ_1) src_rows, (SELECT COUNT(*) FROM DC_ADJ_1 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_ADJ_1 WHERE ORA_ERR_TAG$ = 'KHI.DC_ADJ_1') err_rows FROM dual
+UNION ALL
+SELECT 'DC_ADJ_2' tgt, 'KHI.DC_ADJ_2' src, (SELECT COUNT(*) FROM &&KHI_SCH..DC_ADJ_2) src_rows, (SELECT COUNT(*) FROM DC_ADJ_2 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_ADJ_2 WHERE ORA_ERR_TAG$ = 'KHI.DC_ADJ_2') err_rows FROM dual
+UNION ALL
+SELECT 'DC_LADGER_ADJ' tgt, 'KHI.DC_LADGER_ADJ' src, (SELECT COUNT(*) FROM &&KHI_SCH..DC_LADGER_ADJ) src_rows, (SELECT COUNT(*) FROM DC_LADGER_ADJ WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_LADGER_ADJ WHERE ORA_ERR_TAG$ = 'KHI.DC_LADGER_ADJ') err_rows FROM dual
+UNION ALL
+SELECT 'TAX' tgt, 'KHI.TAX' src, (SELECT COUNT(*) FROM &&KHI_SCH..TAX) src_rows, (SELECT COUNT(*) FROM TAX WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TAX WHERE ORA_ERR_TAG$ = 'KHI.TAX') err_rows FROM dual
+UNION ALL
+SELECT 'TAX' tgt, 'ISB.TAX' src, (SELECT COUNT(*) FROM &&ISB_SCH..TAX) src_rows, (SELECT COUNT(*) FROM TAX WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TAX WHERE ORA_ERR_TAG$ = 'ISB.TAX') err_rows FROM dual
+UNION ALL
+SELECT 'TAX_DETAIL' tgt, 'KHI.TAX_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..TAX_DETAIL) src_rows, (SELECT COUNT(*) FROM TAX_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TAX_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.TAX_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'TAX_DETAIL' tgt, 'ISB.TAX_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..TAX_DETAIL) src_rows, (SELECT COUNT(*) FROM TAX_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TAX_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.TAX_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'TAX_CERTIFICATE' tgt, 'KHI.TAX_CERTIFICATE' src, (SELECT COUNT(*) FROM &&KHI_SCH..TAX_CERTIFICATE) src_rows, (SELECT COUNT(*) FROM TAX_CERTIFICATE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TAX_CERTIFICATE WHERE ORA_ERR_TAG$ = 'KHI.TAX_CERTIFICATE') err_rows FROM dual
+UNION ALL
+SELECT 'TAX_CERTIFICATE_DTL' tgt, 'KHI.TAX_CERTIFICATE_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..TAX_CERTIFICATE_DTL) src_rows, (SELECT COUNT(*) FROM TAX_CERTIFICATE_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_TAX_CERTIFICATE_DTL WHERE ORA_ERR_TAG$ = 'KHI.TAX_CERTIFICATE_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'VOCH_POST' tgt, 'KHI.VOCH_POST' src, (SELECT COUNT(*) FROM &&KHI_SCH..VOCH_POST) src_rows, (SELECT COUNT(*) FROM VOCH_POST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_VOCH_POST WHERE ORA_ERR_TAG$ = 'KHI.VOCH_POST') err_rows FROM dual
+UNION ALL
+SELECT 'VOCH_DTL' tgt, 'KHI.VOCH_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..VOCH_DTL) src_rows, (SELECT COUNT(*) FROM VOCH_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_VOCH_DTL WHERE ORA_ERR_TAG$ = 'KHI.VOCH_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERNAME' tgt, 'KHI.SEC_USERNAME' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_USERNAME) src_rows, (SELECT COUNT(*) FROM SEC_USERNAME WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERNAME WHERE ORA_ERR_TAG$ = 'KHI.SEC_USERNAME') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERNAME' tgt, 'ISB.SEC_USERNAME' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_USERNAME) src_rows, (SELECT COUNT(*) FROM SEC_USERNAME WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERNAME WHERE ORA_ERR_TAG$ = 'ISB.SEC_USERNAME') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERCMPN' tgt, 'KHI.SEC_USERCMPN' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_USERCMPN) src_rows, (SELECT COUNT(*) FROM SEC_USERCMPN WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERCMPN WHERE ORA_ERR_TAG$ = 'KHI.SEC_USERCMPN') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERCMPN' tgt, 'ISB.SEC_USERCMPN' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_USERCMPN) src_rows, (SELECT COUNT(*) FROM SEC_USERCMPN WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERCMPN WHERE ORA_ERR_TAG$ = 'ISB.SEC_USERCMPN') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_MODULE_S' tgt, 'KHI.SEC_MODULE_S' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_MODULE_S) src_rows, (SELECT COUNT(*) FROM SEC_MODULE_S WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_MODULE_S WHERE ORA_ERR_TAG$ = 'KHI.SEC_MODULE_S') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_MODULE_S' tgt, 'ISB.SEC_MODULE_S' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_MODULE_S) src_rows, (SELECT COUNT(*) FROM SEC_MODULE_S WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_MODULE_S WHERE ORA_ERR_TAG$ = 'ISB.SEC_MODULE_S') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_MAINMENU' tgt, 'KHI.SEC_MAINMENU' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_MAINMENU) src_rows, (SELECT COUNT(*) FROM SEC_MAINMENU WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_MAINMENU WHERE ORA_ERR_TAG$ = 'KHI.SEC_MAINMENU') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_MAINMENU' tgt, 'ISB.SEC_MAINMENU' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_MAINMENU) src_rows, (SELECT COUNT(*) FROM SEC_MAINMENU WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_MAINMENU WHERE ORA_ERR_TAG$ = 'ISB.SEC_MAINMENU') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERPERM' tgt, 'KHI.SEC_USERPERM' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_USERPERM) src_rows, (SELECT COUNT(*) FROM SEC_USERPERM WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERPERM WHERE ORA_ERR_TAG$ = 'KHI.SEC_USERPERM') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERPERM' tgt, 'ISB.SEC_USERPERM' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_USERPERM) src_rows, (SELECT COUNT(*) FROM SEC_USERPERM WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERPERM WHERE ORA_ERR_TAG$ = 'ISB.SEC_USERPERM') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERMENU' tgt, 'KHI.SEC_USERMENU' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_USERMENU) src_rows, (SELECT COUNT(*) FROM SEC_USERMENU WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERMENU WHERE ORA_ERR_TAG$ = 'KHI.SEC_USERMENU') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USERMENU' tgt, 'ISB.SEC_USERMENU' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_USERMENU) src_rows, (SELECT COUNT(*) FROM SEC_USERMENU WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USERMENU WHERE ORA_ERR_TAG$ = 'ISB.SEC_USERMENU') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USER_FAV' tgt, 'KHI.SEC_USER_FAV' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_USER_FAV) src_rows, (SELECT COUNT(*) FROM SEC_USER_FAV WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USER_FAV WHERE ORA_ERR_TAG$ = 'KHI.SEC_USER_FAV') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_USER_FAV' tgt, 'ISB.SEC_USER_FAV' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_USER_FAV) src_rows, (SELECT COUNT(*) FROM SEC_USER_FAV WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_USER_FAV WHERE ORA_ERR_TAG$ = 'ISB.SEC_USER_FAV') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_LHISTORY' tgt, 'KHI.SEC_LHISTORY' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_LHISTORY) src_rows, (SELECT COUNT(*) FROM SEC_LHISTORY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_LHISTORY WHERE ORA_ERR_TAG$ = 'KHI.SEC_LHISTORY') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_LHISTORY' tgt, 'ISB.SEC_LHISTORY' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_LHISTORY) src_rows, (SELECT COUNT(*) FROM SEC_LHISTORY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_LHISTORY WHERE ORA_ERR_TAG$ = 'ISB.SEC_LHISTORY') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_MOD_ACES' tgt, 'KHI.SEC_MOD_ACES' src, (SELECT COUNT(*) FROM &&KHI_SCH..SEC_MOD_ACES) src_rows, (SELECT COUNT(*) FROM SEC_MOD_ACES WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_MOD_ACES WHERE ORA_ERR_TAG$ = 'KHI.SEC_MOD_ACES') err_rows FROM dual
+UNION ALL
+SELECT 'SEC_MOD_ACES' tgt, 'ISB.SEC_MOD_ACES' src, (SELECT COUNT(*) FROM &&ISB_SCH..SEC_MOD_ACES) src_rows, (SELECT COUNT(*) FROM SEC_MOD_ACES WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_SEC_MOD_ACES WHERE ORA_ERR_TAG$ = 'ISB.SEC_MOD_ACES') err_rows FROM dual
+UNION ALL
+SELECT 'U_AUDIT' tgt, 'KHI.U_AUDIT' src, (SELECT COUNT(*) FROM &&KHI_SCH..U_AUDIT) src_rows, (SELECT COUNT(*) FROM U_AUDIT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_U_AUDIT WHERE ORA_ERR_TAG$ = 'KHI.U_AUDIT') err_rows FROM dual
+UNION ALL
+SELECT 'U_AUDIT' tgt, 'ISB.U_AUDIT' src, (SELECT COUNT(*) FROM &&ISB_SCH..U_AUDIT) src_rows, (SELECT COUNT(*) FROM U_AUDIT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_U_AUDIT WHERE ORA_ERR_TAG$ = 'ISB.U_AUDIT') err_rows FROM dual
+UNION ALL
+SELECT 'LOG_CUSTOMER_INFO' tgt, 'ISB.LOG_CUSTOMER_INFO' src, (SELECT COUNT(*) FROM &&ISB_SCH..LOG_CUSTOMER_INFO) src_rows, (SELECT COUNT(*) FROM LOG_CUSTOMER_INFO WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_LOG_CUSTOMER_INFO WHERE ORA_ERR_TAG$ = 'ISB.LOG_CUSTOMER_INFO') err_rows FROM dual
+UNION ALL
+SELECT 'LOG_CUSTOMER_CREDIT_APP' tgt, 'ISB.LOG_CUSTOMER_CREDIT_APP' src, (SELECT COUNT(*) FROM &&ISB_SCH..LOG_CUSTOMER_CREDIT_APP) src_rows, (SELECT COUNT(*) FROM LOG_CUSTOMER_CREDIT_APP WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_LOG_CUSTOMER_CREDIT_APP WHERE ORA_ERR_TAG$ = 'ISB.LOG_CUSTOMER_CREDIT_APP') err_rows FROM dual
+UNION ALL
+SELECT 'RATE_UPDATE_HISTORY' tgt, 'ISB.RATE_UPDATE_HISTORY' src, (SELECT COUNT(*) FROM &&ISB_SCH..RATE_UPDATE_HISTORY) src_rows, (SELECT COUNT(*) FROM RATE_UPDATE_HISTORY WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_RATE_UPDATE_HISTORY WHERE ORA_ERR_TAG$ = 'ISB.RATE_UPDATE_HISTORY') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_MST' tgt, 'ISB.PERMIT_MST' src, (SELECT COUNT(*) FROM &&ISB_SCH..PERMIT_MST) src_rows, (SELECT COUNT(*) FROM PERMIT_MST WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_MST WHERE ORA_ERR_TAG$ = 'ISB.PERMIT_MST') err_rows FROM dual
+UNION ALL
+SELECT 'PERMIT_DTL' tgt, 'ISB.PERMIT_DTL' src, (SELECT COUNT(*) FROM &&ISB_SCH..PERMIT_DTL) src_rows, (SELECT COUNT(*) FROM PERMIT_DTL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_PERMIT_DTL WHERE ORA_ERR_TAG$ = 'ISB.PERMIT_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'DC_AKNOW' tgt, 'ISB.DC_AKNOW' src, (SELECT COUNT(*) FROM &&ISB_SCH..DC_AKNOW) src_rows, (SELECT COUNT(*) FROM DC_AKNOW WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_AKNOW WHERE ORA_ERR_TAG$ = 'ISB.DC_AKNOW') err_rows FROM dual
+UNION ALL
+SELECT 'DC_AKNOW_DET' tgt, 'ISB.DC_AKNOW_DET' src, (SELECT COUNT(*) FROM &&ISB_SCH..DC_AKNOW_DET) src_rows, (SELECT COUNT(*) FROM DC_AKNOW_DET WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_AKNOW_DET WHERE ORA_ERR_TAG$ = 'ISB.DC_AKNOW_DET') err_rows FROM dual
+UNION ALL
+SELECT 'TSECURITY_DEPOSIT' tgt, 'ISB.TSECURITY_DEPOSIT' src, (SELECT COUNT(*) FROM &&ISB_SCH..TSECURITY_DEPOSIT) src_rows, (SELECT COUNT(*) FROM TSECURITY_DEPOSIT WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_TSECURITY_DEPOSIT WHERE ORA_ERR_TAG$ = 'ISB.TSECURITY_DEPOSIT') err_rows FROM dual
+UNION ALL
+SELECT 'GODOWN_DO' tgt, 'KHI.GODOWN_DO' src, (SELECT COUNT(*) FROM &&KHI_SCH..GODOWN_DO) src_rows, (SELECT COUNT(*) FROM GODOWN_DO WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_GODOWN_DO WHERE ORA_ERR_TAG$ = 'KHI.GODOWN_DO') err_rows FROM dual
+UNION ALL
+SELECT 'GODOWN_DO_DTL' tgt, 'KHI.GODOWN_DO_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..GODOWN_DO_DTL) src_rows, (SELECT COUNT(*) FROM GODOWN_DO_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_GODOWN_DO_DTL WHERE ORA_ERR_TAG$ = 'KHI.GODOWN_DO_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'ACK_MST' tgt, 'KHI.ACK_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..ACK_MST) src_rows, (SELECT COUNT(*) FROM ACK_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ACK_MST WHERE ORA_ERR_TAG$ = 'KHI.ACK_MST') err_rows FROM dual
+UNION ALL
+SELECT 'DC_COUPON' tgt, 'KHI.DC_COUPON' src, (SELECT COUNT(*) FROM &&KHI_SCH..DC_COUPON) src_rows, (SELECT COUNT(*) FROM DC_COUPON WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_COUPON WHERE ORA_ERR_TAG$ = 'KHI.DC_COUPON') err_rows FROM dual
+UNION ALL
+SELECT 'RETAILER_INFO' tgt, 'KHI.RETAILER_INFO' src, (SELECT COUNT(*) FROM &&KHI_SCH..RETAILER_INFO) src_rows, (SELECT COUNT(*) FROM RETAILER_INFO WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RETAILER_INFO WHERE ORA_ERR_TAG$ = 'KHI.RETAILER_INFO') err_rows FROM dual
+UNION ALL
+SELECT 'RET_PAY_MAS' tgt, 'KHI.RET_PAY_MAS' src, (SELECT COUNT(*) FROM &&KHI_SCH..RET_PAY_MAS) src_rows, (SELECT COUNT(*) FROM RET_PAY_MAS WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RET_PAY_MAS WHERE ORA_ERR_TAG$ = 'KHI.RET_PAY_MAS') err_rows FROM dual
+UNION ALL
+SELECT 'RET_PAY_DET' tgt, 'KHI.RET_PAY_DET' src, (SELECT COUNT(*) FROM &&KHI_SCH..RET_PAY_DET) src_rows, (SELECT COUNT(*) FROM RET_PAY_DET WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RET_PAY_DET WHERE ORA_ERR_TAG$ = 'KHI.RET_PAY_DET') err_rows FROM dual
+UNION ALL
+SELECT 'D_CATEGORY' tgt, 'KHI.D_CATEGORY' src, (SELECT COUNT(*) FROM &&KHI_SCH..D_CATEGORY) src_rows, (SELECT COUNT(*) FROM D_CATEGORY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_D_CATEGORY WHERE ORA_ERR_TAG$ = 'KHI.D_CATEGORY') err_rows FROM dual
+UNION ALL
+SELECT 'D_DEALER_MASTER' tgt, 'KHI.D_DEALER_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..D_DEALER_MASTER) src_rows, (SELECT COUNT(*) FROM D_DEALER_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_D_DEALER_MASTER WHERE ORA_ERR_TAG$ = 'KHI.D_DEALER_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'D_RETAILER_MASTER' tgt, 'KHI.D_RETAILER_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..D_RETAILER_MASTER) src_rows, (SELECT COUNT(*) FROM D_RETAILER_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_D_RETAILER_MASTER WHERE ORA_ERR_TAG$ = 'KHI.D_RETAILER_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'D_INSENTIVE_MASTER' tgt, 'KHI.D_INSENTIVE_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..D_INSENTIVE_MASTER) src_rows, (SELECT COUNT(*) FROM D_INSENTIVE_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_D_INSENTIVE_MASTER WHERE ORA_ERR_TAG$ = 'KHI.D_INSENTIVE_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT_TYPE' tgt, 'KHI.DISCOUNT_TYPE' src, (SELECT COUNT(*) FROM &&KHI_SCH..DISCOUNT_TYPE) src_rows, (SELECT COUNT(*) FROM DISCOUNT_TYPE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT_TYPE WHERE ORA_ERR_TAG$ = 'KHI.DISCOUNT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT_TYPE' tgt, 'ISB.DISCOUNT_TYPE' src, (SELECT COUNT(*) FROM &&ISB_SCH..DISCOUNT_TYPE) src_rows, (SELECT COUNT(*) FROM DISCOUNT_TYPE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT_TYPE WHERE ORA_ERR_TAG$ = 'ISB.DISCOUNT_TYPE') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT2' tgt, 'KHI.DISCOUNT2' src, (SELECT COUNT(*) FROM &&KHI_SCH..DISCOUNT2) src_rows, (SELECT COUNT(*) FROM DISCOUNT2 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT2 WHERE ORA_ERR_TAG$ = 'KHI.DISCOUNT2') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT2' tgt, 'ISB.DISCOUNT2' src, (SELECT COUNT(*) FROM &&ISB_SCH..DISCOUNT2) src_rows, (SELECT COUNT(*) FROM DISCOUNT2 WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT2 WHERE ORA_ERR_TAG$ = 'ISB.DISCOUNT2') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT_APP_MASTER' tgt, 'KHI.DISCOUNT_APP_MASTER' src, (SELECT COUNT(*) FROM &&KHI_SCH..DISCOUNT_APP_MASTER) src_rows, (SELECT COUNT(*) FROM DISCOUNT_APP_MASTER WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT_APP_MASTER WHERE ORA_ERR_TAG$ = 'KHI.DISCOUNT_APP_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT_APP_MASTER' tgt, 'ISB.DISCOUNT_APP_MASTER' src, (SELECT COUNT(*) FROM &&ISB_SCH..DISCOUNT_APP_MASTER) src_rows, (SELECT COUNT(*) FROM DISCOUNT_APP_MASTER WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT_APP_MASTER WHERE ORA_ERR_TAG$ = 'ISB.DISCOUNT_APP_MASTER') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT_APP_DETAIL' tgt, 'KHI.DISCOUNT_APP_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..DISCOUNT_APP_DETAIL) src_rows, (SELECT COUNT(*) FROM DISCOUNT_APP_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT_APP_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.DISCOUNT_APP_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'DISCOUNT_APP_DETAIL' tgt, 'ISB.DISCOUNT_APP_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..DISCOUNT_APP_DETAIL) src_rows, (SELECT COUNT(*) FROM DISCOUNT_APP_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISCOUNT_APP_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.DISCOUNT_APP_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'PRICE_OPENING' tgt, 'KHI.PRICE_OPENING' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRICE_OPENING) src_rows, (SELECT COUNT(*) FROM PRICE_OPENING WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRICE_OPENING WHERE ORA_ERR_TAG$ = 'KHI.PRICE_OPENING') err_rows FROM dual
+UNION ALL
+SELECT 'PRICE_SLAB_PERIOD' tgt, 'KHI.PRICE_SLAB_PERIOD' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRICE_SLAB_PERIOD) src_rows, (SELECT COUNT(*) FROM PRICE_SLAB_PERIOD WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRICE_SLAB_PERIOD WHERE ORA_ERR_TAG$ = 'KHI.PRICE_SLAB_PERIOD') err_rows FROM dual
+UNION ALL
+SELECT 'PRICE_SLAB' tgt, 'KHI.PRICE_SLAB' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRICE_SLAB) src_rows, (SELECT COUNT(*) FROM PRICE_SLAB WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRICE_SLAB WHERE ORA_ERR_TAG$ = 'KHI.PRICE_SLAB') err_rows FROM dual
+UNION ALL
+SELECT 'PRICE_SLAB_OC' tgt, 'KHI.PRICE_SLAB_OC' src, (SELECT COUNT(*) FROM &&KHI_SCH..PRICE_SLAB_OC) src_rows, (SELECT COUNT(*) FROM PRICE_SLAB_OC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_PRICE_SLAB_OC WHERE ORA_ERR_TAG$ = 'KHI.PRICE_SLAB_OC') err_rows FROM dual
+UNION ALL
+SELECT 'DUMMY_INV_MST' tgt, 'KHI.DUMMY_INV_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..DUMMY_INV_MST) src_rows, (SELECT COUNT(*) FROM DUMMY_INV_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DUMMY_INV_MST WHERE ORA_ERR_TAG$ = 'KHI.DUMMY_INV_MST') err_rows FROM dual
+UNION ALL
+SELECT 'DUMMY_INV_DTL' tgt, 'KHI.DUMMY_INV_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..DUMMY_INV_DTL) src_rows, (SELECT COUNT(*) FROM DUMMY_INV_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DUMMY_INV_DTL WHERE ORA_ERR_TAG$ = 'KHI.DUMMY_INV_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'DISTRICT_DTL' tgt, 'KHI.DISTRICT_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..DISTRICT_DTL) src_rows, (SELECT COUNT(*) FROM DISTRICT_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISTRICT_DTL WHERE ORA_ERR_TAG$ = 'KHI.DISTRICT_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'DISTRICT_DTL' tgt, 'ISB.DISTRICT_DTL' src, (SELECT COUNT(*) FROM &&ISB_SCH..DISTRICT_DTL) src_rows, (SELECT COUNT(*) FROM DISTRICT_DTL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISTRICT_DTL WHERE ORA_ERR_TAG$ = 'ISB.DISTRICT_DTL') err_rows FROM dual
+UNION ALL
+SELECT 'APCAMA_QUOTA' tgt, 'KHI.APCAMA_QUOTA' src, (SELECT COUNT(*) FROM &&KHI_SCH..APCAMA_QUOTA) src_rows, (SELECT COUNT(*) FROM APCAMA_QUOTA WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_APCAMA_QUOTA WHERE ORA_ERR_TAG$ = 'KHI.APCAMA_QUOTA') err_rows FROM dual
+UNION ALL
+SELECT 'APCAMA_QUOTA' tgt, 'ISB.APCAMA_QUOTA' src, (SELECT COUNT(*) FROM &&ISB_SCH..APCAMA_QUOTA) src_rows, (SELECT COUNT(*) FROM APCAMA_QUOTA WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_APCAMA_QUOTA WHERE ORA_ERR_TAG$ = 'ISB.APCAMA_QUOTA') err_rows FROM dual
+UNION ALL
+SELECT 'MARKETING' tgt, 'KHI.MARKETING' src, (SELECT COUNT(*) FROM &&KHI_SCH..MARKETING) src_rows, (SELECT COUNT(*) FROM MARKETING WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_MARKETING WHERE ORA_ERR_TAG$ = 'KHI.MARKETING') err_rows FROM dual
+UNION ALL
+SELECT 'REG_DESC' tgt, 'KHI.REG_DESC' src, (SELECT COUNT(*) FROM &&KHI_SCH..REG_DESC) src_rows, (SELECT COUNT(*) FROM REG_DESC WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_REG_DESC WHERE ORA_ERR_TAG$ = 'KHI.REG_DESC') err_rows FROM dual
+UNION ALL
+SELECT 'RESPONSIBLE_PERSON' tgt, 'KHI.RESPONSIBLE_PERSON' src, (SELECT COUNT(*) FROM &&KHI_SCH..RESPONSIBLE_PERSON) src_rows, (SELECT COUNT(*) FROM RESPONSIBLE_PERSON WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RESPONSIBLE_PERSON WHERE ORA_ERR_TAG$ = 'KHI.RESPONSIBLE_PERSON') err_rows FROM dual
+UNION ALL
+SELECT 'BLOCK_ADV_DEBTS' tgt, 'KHI.BLOCK_ADV_DEBTS' src, (SELECT COUNT(*) FROM &&KHI_SCH..BLOCK_ADV_DEBTS) src_rows, (SELECT COUNT(*) FROM BLOCK_ADV_DEBTS WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_BLOCK_ADV_DEBTS WHERE ORA_ERR_TAG$ = 'KHI.BLOCK_ADV_DEBTS') err_rows FROM dual
+UNION ALL
+SELECT 'MASTER_AREA' tgt, 'KHI.MASTER_AREA' src, (SELECT COUNT(*) FROM &&KHI_SCH..MASTER_AREA) src_rows, (SELECT COUNT(*) FROM MASTER_AREA WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_MASTER_AREA WHERE ORA_ERR_TAG$ = 'KHI.MASTER_AREA') err_rows FROM dual
+UNION ALL
+SELECT 'DISTRICT' tgt, 'KHI.DISTRICT' src, (SELECT COUNT(*) FROM &&KHI_SCH..DISTRICT) src_rows, (SELECT COUNT(*) FROM DISTRICT WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DISTRICT WHERE ORA_ERR_TAG$ = 'KHI.DISTRICT') err_rows FROM dual
+UNION ALL
+SELECT 'CITY' tgt, 'KHI.CITY' src, (SELECT COUNT(*) FROM &&KHI_SCH..CITY) src_rows, (SELECT COUNT(*) FROM CITY WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CITY WHERE ORA_ERR_TAG$ = 'KHI.CITY') err_rows FROM dual
+UNION ALL
+SELECT 'AREA_RATES_DIST' tgt, 'KHI.AREA_RATES_DIST' src, (SELECT COUNT(*) FROM &&KHI_SCH..AREA_RATES_DIST) src_rows, (SELECT COUNT(*) FROM AREA_RATES_DIST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_AREA_RATES_DIST WHERE ORA_ERR_TAG$ = 'KHI.AREA_RATES_DIST') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CANCELLATION' tgt, 'KHI.ORDER_CANCELLATION' src, (SELECT COUNT(*) FROM &&KHI_SCH..ORDER_CANCELLATION) src_rows, (SELECT COUNT(*) FROM ORDER_CANCELLATION WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CANCELLATION WHERE ORA_ERR_TAG$ = 'KHI.ORDER_CANCELLATION') err_rows FROM dual
+UNION ALL
+SELECT 'ORDER_CANCELLATION' tgt, 'ISB.ORDER_CANCELLATION' src, (SELECT COUNT(*) FROM &&ISB_SCH..ORDER_CANCELLATION) src_rows, (SELECT COUNT(*) FROM ORDER_CANCELLATION WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_ORDER_CANCELLATION WHERE ORA_ERR_TAG$ = 'ISB.ORDER_CANCELLATION') err_rows FROM dual
+UNION ALL
+SELECT 'RECEIPT_CANCEL' tgt, 'KHI.RECEIPT_CANCEL' src, (SELECT COUNT(*) FROM &&KHI_SCH..RECEIPT_CANCEL) src_rows, (SELECT COUNT(*) FROM RECEIPT_CANCEL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_RECEIPT_CANCEL WHERE ORA_ERR_TAG$ = 'KHI.RECEIPT_CANCEL') err_rows FROM dual
+UNION ALL
+SELECT 'RECEIPT_CANCEL' tgt, 'ISB.RECEIPT_CANCEL' src, (SELECT COUNT(*) FROM &&ISB_SCH..RECEIPT_CANCEL) src_rows, (SELECT COUNT(*) FROM RECEIPT_CANCEL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_RECEIPT_CANCEL WHERE ORA_ERR_TAG$ = 'ISB.RECEIPT_CANCEL') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_APP_MASTER1' tgt, 'KHI.CREDIT_APP_MASTER1' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_APP_MASTER1) src_rows, (SELECT COUNT(*) FROM CREDIT_APP_MASTER1 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_APP_MASTER1 WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_APP_MASTER1') err_rows FROM dual
+UNION ALL
+SELECT 'CREDIT_APP_DETAIL1' tgt, 'KHI.CREDIT_APP_DETAIL1' src, (SELECT COUNT(*) FROM &&KHI_SCH..CREDIT_APP_DETAIL1) src_rows, (SELECT COUNT(*) FROM CREDIT_APP_DETAIL1 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CREDIT_APP_DETAIL1 WHERE ORA_ERR_TAG$ = 'KHI.CREDIT_APP_DETAIL1') err_rows FROM dual
+UNION ALL
+SELECT 'DEBIT_CREDIT_NOTE' tgt, 'KHI.DEBIT_CREDIT_NOTE' src, (SELECT COUNT(*) FROM &&KHI_SCH..DEBIT_CREDIT_NOTE) src_rows, (SELECT COUNT(*) FROM DEBIT_CREDIT_NOTE WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DEBIT_CREDIT_NOTE WHERE ORA_ERR_TAG$ = 'KHI.DEBIT_CREDIT_NOTE') err_rows FROM dual
+UNION ALL
+SELECT 'DEBIT_CREDIT_NOTE' tgt, 'ISB.DEBIT_CREDIT_NOTE' src, (SELECT COUNT(*) FROM &&ISB_SCH..DEBIT_CREDIT_NOTE) src_rows, (SELECT COUNT(*) FROM DEBIT_CREDIT_NOTE WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_DEBIT_CREDIT_NOTE WHERE ORA_ERR_TAG$ = 'ISB.DEBIT_CREDIT_NOTE') err_rows FROM dual
+UNION ALL
+SELECT 'DC_ADJ_3' tgt, 'KHI.DC_ADJ_3' src, (SELECT COUNT(*) FROM &&KHI_SCH..DC_ADJ_3) src_rows, (SELECT COUNT(*) FROM DC_ADJ_3 WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_DC_ADJ_3 WHERE ORA_ERR_TAG$ = 'KHI.DC_ADJ_3') err_rows FROM dual
+UNION ALL
+SELECT 'REGION' tgt, 'KHI.REGION' src, (SELECT COUNT(*) FROM &&KHI_SCH..REGION) src_rows, (SELECT COUNT(*) FROM REGION WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_REGION WHERE ORA_ERR_TAG$ = 'KHI.REGION') err_rows FROM dual
+UNION ALL
+SELECT 'REGION' tgt, 'ISB.REGION' src, (SELECT COUNT(*) FROM &&ISB_SCH..REGION) src_rows, (SELECT COUNT(*) FROM REGION WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_REGION WHERE ORA_ERR_TAG$ = 'ISB.REGION') err_rows FROM dual
+UNION ALL
+SELECT 'REGION_DETAIL' tgt, 'KHI.REGION_DETAIL' src, (SELECT COUNT(*) FROM &&KHI_SCH..REGION_DETAIL) src_rows, (SELECT COUNT(*) FROM REGION_DETAIL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_REGION_DETAIL WHERE ORA_ERR_TAG$ = 'KHI.REGION_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'REGION_DETAIL' tgt, 'ISB.REGION_DETAIL' src, (SELECT COUNT(*) FROM &&ISB_SCH..REGION_DETAIL) src_rows, (SELECT COUNT(*) FROM REGION_DETAIL WHERE BRNCH = 2) tgt_rows, (SELECT COUNT(*) FROM ERR$_REGION_DETAIL WHERE ORA_ERR_TAG$ = 'ISB.REGION_DETAIL') err_rows FROM dual
+UNION ALL
+SELECT 'NEW_REGION' tgt, 'KHI.NEW_REGION' src, (SELECT COUNT(*) FROM &&KHI_SCH..NEW_REGION) src_rows, (SELECT COUNT(*) FROM NEW_REGION WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_NEW_REGION WHERE ORA_ERR_TAG$ = 'KHI.NEW_REGION') err_rows FROM dual
+UNION ALL
+SELECT 'REGION_PRICE_LIST' tgt, 'KHI.REGION_PRICE_LIST' src, (SELECT COUNT(*) FROM &&KHI_SCH..REGION_PRICE_LIST) src_rows, (SELECT COUNT(*) FROM REGION_PRICE_LIST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_REGION_PRICE_LIST WHERE ORA_ERR_TAG$ = 'KHI.REGION_PRICE_LIST') err_rows FROM dual
+UNION ALL
+SELECT 'CUSTOMERS_DCL' tgt, 'KHI.CUSTOMERS_DCL' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUSTOMERS_DCL) src_rows, (SELECT COUNT(*) FROM CUSTOMERS_DCL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUSTOMERS_DCL WHERE ORA_ERR_TAG$ = 'KHI.CUSTOMERS_DCL') err_rows FROM dual
+UNION ALL
+SELECT 'CUST_GRP_MST' tgt, 'KHI.CUST_GRP_MST' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUST_GRP_MST) src_rows, (SELECT COUNT(*) FROM CUST_GRP_MST WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUST_GRP_MST WHERE ORA_ERR_TAG$ = 'KHI.CUST_GRP_MST') err_rows FROM dual
+UNION ALL
+SELECT 'CUST_GRP_DTL' tgt, 'KHI.CUST_GRP_DTL' src, (SELECT COUNT(*) FROM &&KHI_SCH..CUST_GRP_DTL) src_rows, (SELECT COUNT(*) FROM CUST_GRP_DTL WHERE BRNCH = 1) tgt_rows, (SELECT COUNT(*) FROM ERR$_CUST_GRP_DTL WHERE ORA_ERR_TAG$ = 'KHI.CUST_GRP_DTL') err_rows FROM dual
+) x ORDER BY diff DESC, tgt;
+
+-- ---------------------------------------------------------------- merged columns check
+-- One column holds what KHI and ISB store under two names (KHI name kept).
+-- The branch's own column is loaded; the other one is only used when the own one is NULL.
+-- Expected: rows_lost = 0 everywhere. If not, look at those rows before loading.
+SELECT * FROM (
+SELECT 'AREA.AREA_CD' merged_col, 'KHI.AREA.AREA_CODE' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..AREA WHERE AREA_CD IS NOT NULL AND AREA_CODE IS NOT NULL AND TO_CHAR(AREA_CD) <> TO_CHAR(AREA_CODE)
+UNION ALL
+SELECT 'AREA.AREA_NAME' merged_col, 'KHI.AREA.AREA_DESC' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..AREA WHERE AREA_NAME IS NOT NULL AND AREA_DESC IS NOT NULL AND TO_CHAR(AREA_NAME) <> TO_CHAR(AREA_DESC)
+UNION ALL
+SELECT 'AREA.AREA_CD' merged_col, 'ISB.AREA.AREA_CD' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..AREA WHERE AREA_CODE IS NOT NULL AND AREA_CD IS NOT NULL AND TO_CHAR(AREA_CODE) <> TO_CHAR(AREA_CD)
+UNION ALL
+SELECT 'AREA.AREA_NAME' merged_col, 'ISB.AREA.AREA_NAME' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..AREA WHERE AREA_DESC IS NOT NULL AND AREA_NAME IS NOT NULL AND TO_CHAR(AREA_DESC) <> TO_CHAR(AREA_NAME)
+UNION ALL
+SELECT 'TARGET_MST.SERNO' merged_col, 'KHI.TARGET_MST.TRG_NO' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..TARGET_MST WHERE SERNO IS NOT NULL AND TRG_NO IS NOT NULL AND TO_CHAR(SERNO) <> TO_CHAR(TRG_NO)
+UNION ALL
+SELECT 'TARGET_MST.REMRK' merged_col, 'KHI.TARGET_MST.DESCR' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..TARGET_MST WHERE REMRK IS NOT NULL AND DESCR IS NOT NULL AND TO_CHAR(REMRK) <> TO_CHAR(DESCR)
+UNION ALL
+SELECT 'TARGET_MST.SERNO' merged_col, 'ISB.TARGET_MST.SERNO' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..TARGET_MST WHERE TRG_NO IS NOT NULL AND SERNO IS NOT NULL AND TO_CHAR(TRG_NO) <> TO_CHAR(SERNO)
+UNION ALL
+SELECT 'TARGET_MST.REMRK' merged_col, 'ISB.TARGET_MST.REMRK' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..TARGET_MST WHERE DESCR IS NOT NULL AND REMRK IS NOT NULL AND TO_CHAR(DESCR) <> TO_CHAR(REMRK)
+UNION ALL
+SELECT 'SALES_REQUEST_MASTER.TRANSPORTER_2' merged_col, 'KHI.SALES_REQUEST_MASTER.TRANSPORTER' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..SALES_REQUEST_MASTER WHERE TRANSPORTER_2 IS NOT NULL AND TRANSPORTER IS NOT NULL AND TO_CHAR(TRANSPORTER_2) <> TO_CHAR(TRANSPORTER)
+UNION ALL
+SELECT 'SALES_REQUEST_MASTER.BAG_CD' merged_col, 'KHI.SALES_REQUEST_MASTER.BAGTYP' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..SALES_REQUEST_MASTER WHERE BAG_CD IS NOT NULL AND BAGTYP IS NOT NULL AND TO_CHAR(BAG_CD) <> TO_CHAR(BAGTYP)
+UNION ALL
+SELECT 'SALES_REQUEST_MASTER.TRANSPORTER_2' merged_col, 'ISB.SALES_REQUEST_MASTER.TRANSPORTER_2' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..SALES_REQUEST_MASTER WHERE TRANSPORTER IS NOT NULL AND TRANSPORTER_2 IS NOT NULL AND TO_CHAR(TRANSPORTER) <> TO_CHAR(TRANSPORTER_2)
+UNION ALL
+SELECT 'SALES_REQUEST_MASTER.BAG_CD' merged_col, 'ISB.SALES_REQUEST_MASTER.BAG_CD' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..SALES_REQUEST_MASTER WHERE BAGTYP IS NOT NULL AND BAG_CD IS NOT NULL AND TO_CHAR(BAGTYP) <> TO_CHAR(BAG_CD)
+UNION ALL
+SELECT 'CASH_CHEQUE_RECEIPTS.CANCEL_STATS' merged_col, 'KHI.CASH_CHEQUE_RECEIPTS.STATUS' dropped_value, COUNT(*) rows_lost FROM &&KHI_SCH..CASH_CHEQUE_RECEIPTS WHERE CANCEL_STATS IS NOT NULL AND STATUS IS NOT NULL AND TO_CHAR(CANCEL_STATS) <> TO_CHAR(STATUS)
+UNION ALL
+SELECT 'CASH_CHEQUE_RECEIPTS.CANCEL_STATS' merged_col, 'ISB.CASH_CHEQUE_RECEIPTS.CANCEL_STATS' dropped_value, COUNT(*) rows_lost FROM &&ISB_SCH..CASH_CHEQUE_RECEIPTS WHERE STATUS IS NOT NULL AND CANCEL_STATS IS NOT NULL AND TO_CHAR(STATUS) <> TO_CHAR(CANCEL_STATS)
+) WHERE rows_lost > 0;
+
+-- ---------------------------------------------------------------- source BRNCH / COMPC check (run before the load)
+-- If any legacy table holds more than one BRNCH value, tell us before loading.
+SELECT 'KHI' db, compc, brnch, COUNT(*) FROM &&KHI_SCH..CUSTOMER_INFO GROUP BY compc, brnch
+UNION ALL
+SELECT 'ISB', compc, brnch, COUNT(*) FROM &&ISB_SCH..CUSTOMER_INFO GROUP BY compc, brnch;

@@ -1,0 +1,37 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# deps / builds
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# test output
+playwright-report/
+test-results/
+blob-report/
+
+# runtime files
+storage/
+logs/
+*.log
+weighbridge-buffer.sqlite*
+
+# local business data (real customer names) and DB run logs
+db/reports/*.csv
+db/*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
