@@ -112,6 +112,18 @@ Pricing:
 | GET      | `/pricing/quote?customer=&product=&city=&qtyType=&date=`               | `pricing.view`             | Returns master price breakdown (used by draft OC/permit)              |
 | GET/POST | `/tax/rates?kind=ST                                                    | FED                        | WHT                                                                   | CED` | `tax.view` / `tax.update` | Effective-dated |
 
+Tax rates (P1-05; decisions in Approvals, rule RATE_CHANGE; when no rule applies the change takes effect at once):
+
+| Method | Path                                                                                                          | Permission   | Notes                                                                                                                                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/tax/rates`                                                                                                  | `tax.view`   | WHT rows (TAX_RATE) of my branches + both-branches rows (brnch 0), all statuses                                                                           |
+| GET    | `/tax/rates/effective?filerStatus=&section=&date=`                                                            | `tax.view`   | BR-TAX-05: latest APPROVED row with EFFECTIVE_FROM ≤ date; section row beats general ('-'), branch row beats 0                                            |
+| POST   | `/tax/rates` `{ scope 0/1/2, filerStatus F/N/E, section?, ratePct, effectiveFrom, remarks? }`                 | `tax.update` | New row PENDING_APPROVAL → approval action TAX_RATE_SET; duplicates (same key + date) refused                                                             |
+| POST   | `/tax/product-periods` `{ productCode, dateFrom, fedPerTon, salesTaxPer, mrp?, retailPrice?, companyPrice? }` | `tax.update` | FED / ST change = new PRODUCT_DESC_T period (BR-TAX-10), inserted on approval (action PRODUCT_PERIOD_ADD); must start after the latest period (BR-PRC-01) |
+| GET    | `/tax/product-periods/pending`                                                                                | `tax.view`   | Period changes waiting for approval (current branch)                                                                                                      |
+
+Further tax stays the setting FURTHER_TAX_PCT (BR-TAX-06). The earlier `GET/POST /tax/rates?kind=ST|FED|WHT|CED` design is replaced by the above (ST/FED live on product periods, CED is unused — SCHEMA §2.4).
+
 ## 5. Customers
 
 | Method  | Path                                                                          | Permission              | Notes                                                                                                                            |

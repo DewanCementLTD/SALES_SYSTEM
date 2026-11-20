@@ -209,7 +209,13 @@ export const NAV = [
         phase: 'P1',
       },
       { label: 'Freight sheets', href: '/masters/freight', perm: ['pricing.view'], phase: 'P1' },
-      { label: 'Tax rates', href: '/masters/tax-rates', perm: ['tax.view'], phase: 'P1' },
+      {
+        label: 'Tax rates',
+        href: '/masters/tax-rates',
+        perm: ['tax.view'],
+        phase: 'P1',
+        built: true,
+      },
       {
         label: 'Credit types',
         href: '/masters/credit-types',

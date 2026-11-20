@@ -90,3 +90,18 @@ test('P1-02: geography — browse the hierarchy, add a zone, review legacy codes
   await page.getByRole('tab', { name: 'Legacy codes' }).click();
   await expect(page.getByRole('cell', { name: 'CITY', exact: true }).first()).toBeVisible();
 });
+
+test('P1-05: tax rates — WHT tab and product periods', async ({ page }) => {
+  await login(page);
+  await page.goto('/masters/tax-rates');
+  await expect(page.getByRole('heading', { level: 1, name: 'Tax rates' })).toBeVisible();
+  await page.getByLabel('Rate %').fill('0.1');
+  await page.getByLabel('Effective from').fill('2026-07-01');
+  await page.getByRole('button', { name: 'Submit' }).click();
+  await expect(page.getByRole('cell', { name: 'pending approval' }).first()).toBeVisible();
+  await page.getByRole('tab', { name: 'FED & sales tax' }).click();
+  await page.getByRole('combobox', { name: 'Product' }).click();
+  await page.getByRole('option', { name: /^OPC ·/ }).click();
+  await expect(page.getByRole('cell', { name: '4000.00' }).first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/16-tax-rates.png` });
+});

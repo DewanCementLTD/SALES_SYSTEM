@@ -11,3 +11,4 @@ export * from './masters.js';
 export * from './geo.js';
 export * from './customers.js';
 export * from './credit.js';
+export * from './tax-rates.js';

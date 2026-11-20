@@ -10,6 +10,7 @@ import notificationRoutes from './notifications/routes.js';
 import outboxRoutes from './outbox/routes.js';
 import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
+import taxRoutes from './tax/routes.js';
 import userRoutes from './users/routes.js';
 
 /** @param {import('fastify').FastifyInstance} app */
@@ -26,4 +27,5 @@ export async function registerModules(app) {
   await app.register(masterRoutes, { prefix: '/api/v1' });
   await app.register(geoRoutes, { prefix: '/api/v1' });
   await app.register(customerRoutes, { prefix: '/api/v1' });
+  await app.register(taxRoutes, { prefix: '/api/v1' });
 }
