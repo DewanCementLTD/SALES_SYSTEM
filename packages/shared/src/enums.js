@@ -137,13 +137,13 @@ export function isTerminal(machine, status) {
 
 /**
  * Result object for services: `{ ok: true }` or `{ ok: false, code, detail }`.
- * The API maps a failure to AppError('INVALID_STATE', 409).
+ * The API maps a failure to AppError('invalid_state', 409).
  */
 export function checkTransition(machine, from, to) {
   if (canTransition(machine, from, to)) return { ok: true };
   return {
     ok: false,
-    code: 'INVALID_STATE',
+    code: 'invalid_state',
     detail: `${machine} cannot change from ${from} to ${to}`,
   };
 }

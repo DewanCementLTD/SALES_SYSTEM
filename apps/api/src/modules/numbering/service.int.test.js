@@ -62,7 +62,7 @@ describe('numbering service (P0-07, BR-NUM)', () => {
   it('BR-NUM-04: refuses to start a series that was not seeded', async () => {
     await inRollback(async (tx) => {
       await expect(nextNumber(tx, { brnch: 1, year: 2099, docType: 'GP' })).rejects.toMatchObject({
-        code: 'NUMBERING_NOT_SET_UP',
+        code: 'numbering_not_set_up',
       });
     });
   });

@@ -173,12 +173,12 @@ export function translateOracleError(err) {
   if (err instanceof AppError) return err;
   const num = err?.errorNum;
   if (num === 1) {
-    return new AppError('DUPLICATE', 409, 'A record with the same key already exists', {
+    return new AppError('duplicate', 409, 'A record with the same key already exists', {
       cause: err,
     });
   }
   if (num === 54 || num === 30006) {
-    return new AppError('BUSY', 409, 'The record is being changed by another user. Try again.', {
+    return new AppError('busy', 409, 'The record is being changed by another user. Try again.', {
       cause: err,
     });
   }

@@ -50,7 +50,7 @@ describe('state machines (BUSINESS_RULES §12)', () => {
   it('checkTransition explains a refused change', () => {
     expect(checkTransition('OC', 'CLOSED', 'DRAFT')).toEqual({
       ok: false,
-      code: 'INVALID_STATE',
+      code: 'invalid_state',
       detail: 'OC cannot change from CLOSED to DRAFT',
     });
   });

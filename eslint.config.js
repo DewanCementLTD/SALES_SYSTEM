@@ -37,6 +37,8 @@ export default [
       'import-x/no-unresolved': 'off',
       'import-x/no-named-as-default-member': 'off',
       'import-x/no-named-as-default': 'off',
+      // false positives on CommonJS packages with default exports (e.g. @fastify/cookie)
+      'import-x/default': 'off',
       'import-x/order': ['error', { 'newlines-between': 'never' }],
     },
   },

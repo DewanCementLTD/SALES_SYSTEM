@@ -25,7 +25,7 @@ export async function nextNumber(tx, { brnch, year, docType }) {
   if (!row) {
     // BR-NUM-04: numbering must be seeded so it continues the legacy series; never restart at 1 silently.
     throw new AppError(
-      'NUMBERING_NOT_SET_UP',
+      'numbering_not_set_up',
       409,
       `Document numbering for ${docType} is not set up for branch ${brnch}, year ${year}. Ask an administrator to run the numbering seed.`,
       { ruleId: 'BR-NUM-04', data: binds },
