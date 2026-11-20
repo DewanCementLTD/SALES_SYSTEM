@@ -190,10 +190,9 @@ export async function lookups(tx, brnch, types, nowMs, cache) {
   for (const type of types) {
     let items = cache.get(brnch, type, nowMs);
     if (!items) {
-      items =
-        type === 'product-codes'
-          ? await repo.productCodes(tx, brnch)
-          : await repo.lookup(tx, MASTERS[type], brnch);
+      if (type === 'product-codes') items = await repo.productCodes(tx, brnch);
+      else if (type === 'customer-zones') items = await repo.customerZones(tx, brnch);
+      else items = await repo.lookup(tx, MASTERS[type], brnch);
       cache.set(brnch, type, nowMs, items);
     }
     out[type] = items;

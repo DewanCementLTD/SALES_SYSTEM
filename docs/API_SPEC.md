@@ -127,6 +127,16 @@ Pricing:
 | GET     | `/customers/{brnch}/{code}/360`                                               | `customer.view`         | Summary for side panel                                                                                                           |
 | POST    | `/customers/{brnch}/{code}/credit-limits`                                     | `customer.credit_limit` | Credit Limit document → approval                                                                                                 |
 
+P1-03 implementation notes:
+
+- `GET /customers?brnch=&q=&channel=&status=&geoCode=` — `q` matches name, code, mobile, NTN; `geoCode` includes everything below the node.
+- `POST /customers` body: tab fields (`packages/shared/src/customers.js` CUSTOMER_FIELDS) + `geoCode` (area or city, BR-CUS-03) + `zoneCode` (customer zone from ZONE_DESC; default = geography zone when ZONE_DESC has it). Code `Z-TT-AA-NNN` / `ZZTT-AA-NNN` (decision 20 Nov 2026). Response `{ customer, requestId }` (approval request CUSTOMER_APPROVE / action CUSTOMER_CREATE).
+- `PUT /customers/{brnch}/{code}` (If-Match) body = only the changed fields. On an APPROVED/BLOCKED customer, tax-profile and contact-number fields (`approval: true` in the registry) go to a change request (action CUSTOMER_CHANGE, snapshot with from/to per field) → **202** `{ customer, requestId, pendingFields }`; other fields apply at once.
+- `POST …/approve` · `/reject` `{ comment? }` decide the pending CUSTOMER_APPROVE request through the approval engine (maker ≠ checker); a rejected new customer returns to DRAFT. `POST …/submit` (If-Match) sends a DRAFT again.
+- `POST …/block` `{ reason, stopDispatch }` · `/unblock` `{ reason }` (If-Match) → status BLOCKED/APPROVED + CUSTOMER_BLOCK history row.
+- `GET /customers/{brnch}/{code}` also returns `pendingApproval` and `blocks: { history, legacyGroups }`.
+- Legacy customers have no DOC_STATUS: shown as APPROVED (CLOSED when CLOSED = 'Y').
+
 ## 6. SRF
 
 | Method | Path                                       | Permission   | Notes                                          |

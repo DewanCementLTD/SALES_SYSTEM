@@ -2,6 +2,7 @@
 import approvalRoutes from './approvals/routes.js';
 import auditRoutes from './audit/routes.js';
 import authRoutes from './auth/routes.js';
+import customerRoutes from './customers/routes.js';
 import fileRoutes from './files/routes.js';
 import geoRoutes from './geo/routes.js';
 import masterRoutes from './masters/routes.js';
@@ -24,4 +25,5 @@ export async function registerModules(app) {
   await app.register(fileRoutes, { prefix: '/api/v1' });
   await app.register(masterRoutes, { prefix: '/api/v1' });
   await app.register(geoRoutes, { prefix: '/api/v1' });
+  await app.register(customerRoutes, { prefix: '/api/v1' });
 }

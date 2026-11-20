@@ -15,7 +15,8 @@ function selectList(def) {
 }
 
 /** DB value → API value by field kind. */
-function toApi(f, v) {
+export function toApi(f, v) {
+  if (f.kind === 'yn') return v === 'Y';
   if (v === null || v === undefined) return f.kind === 'flag01' ? false : null;
   switch (f.kind) {
     case 'int':
@@ -36,7 +37,8 @@ function toApi(f, v) {
 }
 
 /** API value → bind value by field kind. */
-function toDb(f, v) {
+export function toDb(f, v) {
+  if (f.kind === 'yn') return v ? 'Y' : 'N';
   if (v === null || v === undefined) return f.kind === 'flag01' ? 0 : null;
   if (f.kind === 'flag01') return v ? 1 : 0;
   if (f.kind === 'decimal') return dec(v).toString();
@@ -241,4 +243,24 @@ export async function productCodes(tx, brnch) {
     { brnch },
   );
   return rows.map((r) => ({ value: r.V, label: r.L, active: true }));
+}
+
+/** Customer zones (ZONE_DESC): CUSTOMER_INFO.ZONE_CODE must be one of these (FK_CUSTOMER_INFO_19). */
+export async function customerZones(tx, brnch) {
+  const rows = await tx.many(
+    'SELECT ZONE_CODE AS V, ZONE_NAME AS L FROM ZONE_DESC WHERE BRNCH = :brnch ORDER BY ZONE_CODE',
+    { brnch },
+  );
+  return rows.map((r) => ({ value: r.V, label: r.L, active: true }));
+}
+
+export async function customerZoneExists(tx, brnch, code) {
+  const r = await tx.one(
+    'SELECT COUNT(*) AS N FROM ZONE_DESC WHERE BRNCH = :b AND ZONE_CODE = :z',
+    {
+      b: brnch,
+      z: code,
+    },
+  );
+  return Number(r.N) > 0;
 }

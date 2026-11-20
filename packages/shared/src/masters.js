@@ -2,13 +2,15 @@
 // API (SQL column allow-list, validation) and the web (list columns, forms). Masters are
 // deactivated, never deleted (BUSINESS_RULES §1). Every master is per branch (key starts with BRNCH).
 import { z } from 'zod';
+import { zCnic, zMobile, zNtn, zStrn, zWhatsapp } from './validators.js';
 
 /**
- * @typedef {'text'|'int'|'decimal'|'flag01'|'enum'|'ref'|'date'} FieldKind
+ * @typedef {'text'|'int'|'decimal'|'flag01'|'yn'|'enum'|'ref'|'date'} FieldKind
  * @typedef {{
  *   name: string, col: string, kind: FieldKind, label: string,
  *   max?: number, required?: boolean, upper?: boolean, options?: {value: string, label: string}[],
- *   ref?: string, auto?: boolean, list?: boolean, scale?: number, hint?: string
+ *   ref?: string, auto?: boolean, list?: boolean, scale?: number, hint?: string,
+ *   format?: 'cnic'|'ntn'|'strn'|'mobile'|'whatsapp'|'email', tab?: string
  * }} MasterField
  * @typedef {{
  *   type: string, table: string, title: string, singular: string, group: string,
@@ -392,7 +394,7 @@ export const MASTERS = Object.freeze(Object.fromEntries(DEFS.map((d) => [d.type,
 export const MASTER_TYPES = Object.freeze(DEFS.map((d) => d.type));
 
 /** Lookup lists that are not masters themselves. */
-export const DERIVED_LOOKUPS = Object.freeze(['product-codes']);
+export const DERIVED_LOOKUPS = Object.freeze(['product-codes', 'customer-zones']);
 
 /** Separator of composite keys in URLs (`/masters/product-periods/1/OPC~57`). */
 export const KEY_SEP = '~';
@@ -426,6 +428,16 @@ export function parseMasterKey(def, raw) {
 
 const KEY_TEXT = /^[A-Za-z0-9_./&-]+$/;
 
+/** Named text formats (validators.js); stored length is checked after normalising. */
+const FORMATS = {
+  cnic: () => zCnic,
+  ntn: () => zNtn,
+  strn: () => zStrn,
+  mobile: () => zMobile,
+  whatsapp: () => zWhatsapp,
+  email: (max) => z.string().trim().toLowerCase().email('Enter a valid e-mail address').max(max),
+};
+
 /** Zod schema for one field value as sent by the client. */
 function fieldSchema(f, { forKey = false } = {}) {
   let s;
@@ -442,6 +454,8 @@ function fieldSchema(f, { forKey = false } = {}) {
       if (f.kind === 'enum') {
         const values = f.options.map((o) => o.value);
         s = z.enum(/** @type {[string, ...string[]]} */ (values));
+      } else if (f.format) {
+        s = FORMATS[f.format](f.max ?? 100);
       } else s = t;
       break;
     }
@@ -455,6 +469,7 @@ function fieldSchema(f, { forKey = false } = {}) {
         .regex(new RegExp(`^\\d{1,12}(\\.\\d{1,${f.scale ?? 2}})?$`), 'Enter a number');
       break;
     case 'flag01':
+    case 'yn':
       s = z.boolean();
       break;
     case 'date':
@@ -470,9 +485,11 @@ function fieldSchema(f, { forKey = false } = {}) {
 const emptyToNull = (v) => (typeof v === 'string' && v.trim() === '' ? null : v);
 
 /**
- * Body schema for create (key + fields) or update (fields only).
- * @param {MasterDef} def
- * @param {'create'|'update'} mode
+ * Body schema for create (key + fields), update (fields only) or patch (only the fields sent;
+ * required fields may be left out but not emptied — legacy rows keep values that today's rules
+ * would reject until someone edits that field).
+ * @param {Pick<MasterDef, 'key'|'fields'>} def
+ * @param {'create'|'update'|'patch'} mode
  */
 export function masterBodySchema(def, mode) {
   /** @type {Record<string, z.ZodTypeAny>} */
@@ -487,10 +504,16 @@ export function masterBodySchema(def, mode) {
   }
   for (const f of def.fields) {
     const base = fieldSchema(f);
+    if (mode === 'patch') {
+      shape[f.name] = f.required
+        ? z.preprocess(emptyToNull, base).optional()
+        : z.preprocess(emptyToNull, base.nullable().optional());
+      continue;
+    }
     shape[f.name] =
       f.required && !(f.auto && mode === 'create')
         ? z.preprocess(emptyToNull, base)
         : z.preprocess(emptyToNull, base.nullable().optional());
   }
-  return z.object(shape);
+  return mode === 'patch' ? z.object(shape).strict() : z.object(shape);
 }
