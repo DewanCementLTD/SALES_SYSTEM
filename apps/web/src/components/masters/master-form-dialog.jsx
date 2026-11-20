@@ -34,18 +34,18 @@ import { qk } from '@/lib/query-keys';
 const NONE = '__none__';
 
 /** Form value for a field from an API row (strings for inputs). */
-function initialValue(f, row) {
+export function initialValue(f, row) {
   const v = row?.[f.name];
-  if (f.kind === 'flag01') return Boolean(v);
+  if (f.kind === 'flag01' || f.kind === 'yn') return Boolean(v);
   if (v === null || v === undefined) return '';
   return String(v);
 }
 
-function FieldInput({ f, form, options, disabled }) {
+export function FieldInput({ f, form, options, disabled }) {
   const id = `mf-${f.name}`;
   const error = form.formState.errors[f.name]?.message;
   let control;
-  if (f.kind === 'flag01') {
+  if (f.kind === 'flag01' || f.kind === 'yn') {
     control = (
       <Controller
         control={form.control}
@@ -105,7 +105,9 @@ function FieldInput({ f, form, options, disabled }) {
     );
   }
   return (
-    <div className={f.kind === 'flag01' ? 'flex items-center gap-3' : 'space-y-1.5'}>
+    <div
+      className={f.kind === 'flag01' || f.kind === 'yn' ? 'flex items-center gap-3' : 'space-y-1.5'}
+    >
       <Label htmlFor={id}>
         {f.label}
         {f.required && !f.auto && <span className="text-danger"> *</span>}

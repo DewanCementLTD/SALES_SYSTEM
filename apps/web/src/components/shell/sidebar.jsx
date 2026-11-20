@@ -131,7 +131,7 @@ export function Sidebar() {
       <BrandBlock />
       <SidebarNav />
       <div className="border-t border-sidebar-border px-5 py-3 text-[11px] text-sidebar-foreground/60">
-        DCL Sales &amp; Dispatch · P0
+        DCL Sales &amp; Dispatch · P1
       </div>
     </aside>
   );

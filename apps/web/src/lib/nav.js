@@ -123,7 +123,13 @@ export const NAV = [
     label: 'Customers',
     icon: Users,
     items: [
-      { label: 'Customers', href: '/customers', perm: ['customer.view'], phase: 'P1' },
+      {
+        label: 'Customers',
+        href: '/customers',
+        perm: ['customer.view'],
+        phase: 'P1',
+        built: true,
+      },
       {
         label: 'Approval requests',
         href: '/customers/requests',

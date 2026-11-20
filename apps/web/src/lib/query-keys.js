@@ -19,4 +19,6 @@ export const qk = {
   geoNodes: (params) => ['geo', 'nodes', params],
   geoLegacy: (params) => ['geo', 'legacy', params],
   geoSummary: (brnch) => ['geo', 'summary', brnch],
+  customers: (params) => ['customers', 'list', params],
+  customer: (brnch, code) => ['customers', 'detail', brnch, code],
 };
