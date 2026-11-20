@@ -112,6 +112,8 @@ Pricing:
 | GET      | `/pricing/quote?customer=&product=&city=&qtyType=&date=`               | `pricing.view`             | Returns master price breakdown (used by draft OC/permit)              |
 | GET/POST | `/tax/rates?kind=ST                                                    | FED                        | WHT                                                                   | CED` | `tax.view` / `tax.update` | Effective-dated |
 
+Trade prices (P1-06): `GET /pricing/trade-prices?customer=&product=&geoCode=&status=&q=` (all versions), `GET /pricing/trade-prices/history?customer=&product=&geoCode=`, `GET /pricing/quote?customer=&product=&geoCode=&date=` → `{ tradePrice, period }` (latest APPROVED version with EF_DATE ≤ date + BR-TAX-10 period breakdown: MRP, retail, ST, FED, company price = MRP − ST − FED; MRP = retail + ST when the period has none), `POST /pricing/trade-prices` `{ customerCode, productCode, geoCode (city), invoicePrice, efDate, target?, priceCodeBase? }` → next price-code version (ABABDOPS18 → 19; new key = base + 01), PENDING_APPROVAL, approval RATE_CHANGE / TRADE_PRICE_SET; refused when EF_DATE is not after the current version (BR-PRC-01) or the price is above MRP (BR-PRC-03, `data.excess`). Excel import follows.
+
 Tax rates (P1-05; decisions in Approvals, rule RATE_CHANGE; when no rule applies the change takes effect at once):
 
 | Method | Path                                                                                                          | Permission   | Notes                                                                                                                                                     |
