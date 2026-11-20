@@ -213,8 +213,15 @@ export const NAV = [
         href: '/masters/rate-sheets',
         perm: ['pricing.view'],
         phase: 'P1',
+        built: true,
       },
-      { label: 'Freight sheets', href: '/masters/freight', perm: ['pricing.view'], phase: 'P1' },
+      {
+        label: 'Freight sheets',
+        href: '/masters/freight',
+        perm: ['pricing.view'],
+        phase: 'P1',
+        built: true,
+      },
       {
         label: 'Tax rates',
         href: '/masters/tax-rates',

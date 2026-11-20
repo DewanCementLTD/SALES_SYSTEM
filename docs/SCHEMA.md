@@ -18,6 +18,7 @@ Database: Oracle (target 19c; SQL must stay 11g-compatible). Schema owner on the
 | Customer lines              | `db/migrations/006_CUSTOMER_LINES.sql`                              | LINE_ID + ACTIVE on CUSTOMER_AREA / SECURITY_DEPOSIT, CUSTOMER_AREA.GEO_CODE (Hattar rows mapped via LEGACY_MAP), ACTIVE on CUSTOMER_BANK_ACC                           |
 | Tax rates                   | `db/migrations/007_TAX_RATE.sql`                                    | TAX_RATE: effective-dated WHT % by filer status / section, BRNCH 0 = both, PENDING_APPROVAL → APPROVED/REJECTED                                                         |
 | Trade price city            | `db/migrations/008_TRADE_PRICE_GEO.sql`                             | TRADE_PRICE.GEO_CODE (customer + product + city key); legacy rows mapped via LEGACY_MAP (KHI 347, ISB 2,842 rows); KHI rows priced by old area/district only stay empty |
+| Rate sheet line ids         | `db/migrations/009_RATE_SHEET_SEQ.sql`                              | SEQ_AREA_RATES_P / SEQ_AREA_RATES_D start above the legacy maxima; sheet number = DOC_SEQUENCE RSH                                                                      |
 | Reports for the business    | `db/reports/*.csv`                                                  | `FED_RATE_REVIEW.csv` (Finance), `KHI_CUSTOMERS_WITHOUT_GEO.csv` + `GEO_CODES_KARACHI.csv` (Sales)                                                                      |
 | Later changes               | `db/migrations/NNN_*.sql`                                           | Every change after 05, recorded in `SCHEMA_VERSION`                                                                                                                     |
 | Column-level reference      | `docs/reference/LEGACY_TABLES.md`                                   | All 174 tables with columns, PK/UK/FK (generated)                                                                                                                       |
@@ -204,6 +205,7 @@ Links to legacy tables are by column (no FK), because legacy rows break them; se
 | RCX      | Receipt cancel        | RECEIPT_CANCEL_MASTER.CANCEL_NO                                    |
 | DOA      | DO adjustment advice  | DO_ADJUSTMENT.ADVICE_NO                                            |
 | INC      | Incentive run         | INCENTIVE.SRL_NO                                                   |
+| RSH      | City rate sheet       | AREA_RATES_M.SERNO (P1-07; seeded KHI 101, ISB 1942)               |
 | CLM      | Credit limit document | CREDIT_LIMITS_F.SERNO (P1-04; seeded from legacy max, Hattar 4565) |
 
 Migration seeds `LAST_NO` = max legacy number per (branch, year, type) so numbering continues (BR-NUM-04).

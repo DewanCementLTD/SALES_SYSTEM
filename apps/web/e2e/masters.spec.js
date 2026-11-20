@@ -61,10 +61,10 @@ test('P1-01: products & periods are read-only and show the effective-period note
   await expect(page.getByRole('cell', { name: 'Local Bulk', exact: true })).toBeVisible();
 });
 
-test('unbuilt masters still show the planned screen', async ({ page }) => {
+test('screens of later phases still show the planned screen', async ({ page }) => {
   await login(page);
-  await page.goto('/masters/rate-sheets');
-  await expect(page.getByText(/Planned for P1/)).toBeVisible();
+  await page.goto('/orders/srf');
+  await expect(page.getByText(/Planned for P2/)).toBeVisible();
 });
 
 test('P1-02: geography — browse the hierarchy, add a zone, review legacy codes', async ({
@@ -120,4 +120,20 @@ test('P1-06: trade prices — list, history, import panel', async ({ page }) => 
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Import from Excel' }).click();
   await expect(page.getByLabel('Workbook (.xlsx)')).toBeVisible();
+});
+
+test('P1-07: city rate sheets and freight sheets', async ({ page }) => {
+  await login(page);
+  await page.goto('/masters/rate-sheets');
+  await expect(page.getByRole('heading', { level: 1, name: 'City rate sheets' })).toBeVisible();
+  // wait for real rows (the first cell is the loading row until the list arrives)
+  await page
+    .getByRole('cell', { name: /^(open|approved)$/ })
+    .first()
+    .click();
+  await expect(page.getByRole('heading', { level: 2, name: /^Sheet \d+/ })).toBeVisible();
+  await expect(page.getByText(/Net booking/).first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/18-rate-sheet.png` });
+  await page.goto('/masters/freight');
+  await expect(page.getByRole('heading', { level: 1, name: 'Freight sheets' })).toBeVisible();
 });
