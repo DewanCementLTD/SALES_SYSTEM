@@ -145,6 +145,16 @@ export class Db {
  */
 export async function createDb(cfg) {
   initOracleClient(cfg);
+  // Thick mode runs each call on a libuv worker thread. With fewer threads than connections,
+  // sessions waiting on a row lock (FOR UPDATE) can starve the lock holder's commit → deadlock.
+  if (cfg.ORACLE_CLIENT_MODE === 'thick') {
+    const threads = Number(process.env.UV_THREADPOOL_SIZE ?? 4);
+    if (threads < cfg.DB_POOL_MAX + 4) {
+      throw new Error(
+        `UV_THREADPOOL_SIZE (${threads}) must be at least DB_POOL_MAX + 4 (${cfg.DB_POOL_MAX + 4}) in Thick mode. Set it in .env.`,
+      );
+    }
+  }
   const pool = await oracledb.createPool({
     user: cfg.DATABASE_USER,
     password: cfg.DATABASE_PASSWORD,
