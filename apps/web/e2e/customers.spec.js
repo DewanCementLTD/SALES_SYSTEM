@@ -53,4 +53,11 @@ test('P1-03: create a customer — code preview, pending approval, contacts norm
   await expect(page.getByText('pending approval').first()).toBeVisible();
   await page.getByRole('tab', { name: 'Contacts' }).click();
   await expect(page.getByLabel('Mobile')).toHaveValue('03001234567');
+
+  await page.getByRole('tab', { name: 'Security' }).click();
+  await page.getByLabel('Description').fill('CASH DEPOSIT');
+  await page.getByLabel('Amount (PKR)').fill('150000');
+  await page.getByRole('button', { name: 'Add' }).click();
+  await expect(page.getByRole('cell', { name: 'CASH DEPOSIT' })).toBeVisible();
+  await expect(page.getByText(/Total security deposit/)).toContainText('150,000');
 });

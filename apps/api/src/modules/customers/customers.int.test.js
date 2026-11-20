@@ -189,3 +189,54 @@ describe('customers (P1-03)', () => {
     ).toBe(403);
   });
 });
+
+describe('customer lines (P1-03: areas, security deposits, bank accounts)', () => {
+  it('Hattar legacy areas are mapped to geography cities', async () => {
+    const c = await as({ 2: ['MARKETING'] }, 2);
+    const res = await c.get('/api/v1/customers/2/1-01-01-068/lines/areas');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().items.length).toBeGreaterThan(0);
+    expect(res.json().items[0]).toMatchObject({
+      geoCode: expect.stringMatching(/^Z/),
+      active: true,
+    });
+  });
+
+  it('BR-CUS-06: deposits add up; deactivated lines drop out of the total, never deleted', async () => {
+    const maker = await as({ 1: ['MARKETING'] });
+    const { customer } = await created(maker);
+    const url = `/api/v1/customers/1/${customer.customerCode}/lines/security`;
+    await maker.post(url, { description: 'CASH DEPOSIT', amount: '100000' });
+    const two = await maker.post(url, { description: 'CERTIFICATES', amount: '250000.50' });
+    expect(two.statusCode, two.body).toBe(201);
+    expect(two.json().securityTotal).toBe('350000.50');
+    const key = two.json().items.find((i) => i.description === 'CASH DEPOSIT').key;
+    const off = await maker.post(`${url}/${key}/deactivate`, {});
+    expect(off.json().securityTotal).toBe('250000.50');
+    expect(off.json().items).toHaveLength(2);
+    expect((await maker.post(`${url}/${key}/deactivate`, {})).json().code).toBe('invalid_state');
+  });
+
+  it('areas need an area/city; bank accounts need a known bank; duplicates refused', async () => {
+    const maker = await as({ 1: ['MARKETING'] });
+    const { customer } = await created(maker);
+    const base = `/api/v1/customers/1/${customer.customerCode}/lines`;
+    expect((await maker.post(`${base}/areas`, { geoCode: 'Z1' })).statusCode).toBe(400);
+    const a = await maker.post(`${base}/areas`, { geoCode: GEO });
+    expect(a.statusCode, a.body).toBe(201);
+    expect((await maker.post(`${base}/areas`, { geoCode: GEO })).json().code).toBe('duplicate');
+    const bad = await maker.post(`${base}/bank-accounts`, {
+      bankCode: 'ZZZZ',
+      accountNo: '123',
+      branchName: 'Main',
+    });
+    expect(bad.statusCode).toBe(400);
+    const ok = await maker.post(`${base}/bank-accounts`, {
+      bankCode: 'HBL',
+      accountNo: 'T-998877',
+      branchName: 'Saddar',
+    });
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(ok.json().items[0]).toMatchObject({ key: 'HBL~T-998877', bankName: expect.any(String) });
+  });
+});

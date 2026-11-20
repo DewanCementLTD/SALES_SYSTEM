@@ -14,6 +14,7 @@ import { resolveListBranches } from '../../lib/branch-scope.js';
 import { Errors } from '../../lib/errors.js';
 import { etag, ifMatch } from '../../lib/http.js';
 import { userRoles } from '../rbac/repo.js';
+import * as lines from './lines.js';
 import * as repo from './repo.js';
 import * as svc from './service.js';
 
@@ -328,6 +329,97 @@ export default async function customerRoutes(app) {
           request.txOpts(`customers.${cmd}`),
         );
         return withEtag(reply, c);
+      },
+    );
+  }
+
+  // --- areas / security deposits / bank accounts (add + deactivate, never delete) ---
+  const zKind = z.enum(/** @type {[string, ...string[]]} */ (lines.LINE_KINDS));
+  const zLinesOut = z.object({
+    items: z.array(z.record(z.string(), z.unknown())),
+    securityTotal: z.string().optional(),
+  });
+  const linesOf = async (tx, kind, brnch, code) => {
+    const items = await lines.listLines(tx, kind, brnch, code);
+    return kind === 'security' ? { items, securityTotal: lines.securityTotal(items) } : { items };
+  };
+
+  app.get(
+    '/customers/:brnch/:code/lines/:kind',
+    {
+      config: { permission: P.customer.view },
+      schema: {
+        tags,
+        summary: 'Areas served, security deposits (with total, BR-CUS-06) or bank accounts',
+        params: zParams.extend({ kind: zKind }),
+        response: { 200: zLinesOut },
+      },
+    },
+    async (request) => {
+      const { brnch, code, kind } = request.params;
+      return app.db.read(async (tx) => {
+        if (!(await repo.getCustomer(tx, brnch, code))) throw Errors.notFound('Customer');
+        return linesOf(tx, kind, brnch, code);
+      }, request.txOpts('customers.lines'));
+    },
+  );
+
+  app.post(
+    '/customers/:brnch/:code/lines/:kind',
+    {
+      config: { permission: P.customer.update },
+      schema: {
+        tags,
+        summary: 'Add an area ({ geoCode }), deposit ({ description, amount }) or bank account',
+        params: zParams.extend({ kind: zKind }),
+        body: z.object({}).catchall(z.unknown()),
+        response: { 201: zLinesOut },
+      },
+    },
+    async (request, reply) => {
+      const { brnch, code, kind } = request.params;
+      const parsed = lines.LINE_BODIES[kind].safeParse(request.body);
+      if (!parsed.success) {
+        throw Errors.validation(
+          'Please correct the marked fields',
+          parsed.error.issues.map((i) => ({
+            path: ['body', ...i.path].join('.'),
+            message: i.message,
+          })),
+        );
+      }
+      const out = await app.db.withTx(async (tx) => {
+        await lines.addLine(tx, actor(request), kind, brnch, code, parsed.data);
+        return linesOf(tx, kind, brnch, code);
+      }, request.txOpts('customers.line.add'));
+      return reply.status(201).send(out);
+    },
+  );
+
+  for (const [cmd, active] of [
+    ['deactivate', false],
+    ['activate', true],
+  ]) {
+    app.post(
+      `/customers/:brnch/:code/lines/:kind/:key/${cmd}`,
+      {
+        config: { permission: P.customer.update },
+        schema: {
+          tags,
+          summary: `${cmd === 'activate' ? 'Activate' : 'Deactivate'} a line (never deleted)`,
+          params: zParams.extend({ kind: zKind, key: z.string().min(1).max(40) }),
+          response: { 200: zLinesOut },
+        },
+      },
+      async (request) => {
+        const { brnch, code, kind, key } = request.params;
+        return app.db.withTx(
+          async (tx) => {
+            await lines.setLineActive(tx, actor(request), kind, brnch, code, key, active);
+            return linesOf(tx, kind, brnch, code);
+          },
+          request.txOpts(`customers.line.${cmd}`),
+        );
       },
     );
   }

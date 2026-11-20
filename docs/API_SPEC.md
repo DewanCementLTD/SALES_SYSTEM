@@ -136,6 +136,7 @@ P1-03 implementation notes:
 - `POST …/block` `{ reason, stopDispatch }` · `/unblock` `{ reason }` (If-Match) → status BLOCKED/APPROVED + CUSTOMER_BLOCK history row.
 - `GET /customers/{brnch}/{code}` also returns `pendingApproval` and `blocks: { history, legacyGroups }`.
 - Legacy customers have no DOC_STATUS: shown as APPROVED (CLOSED when CLOSED = 'Y').
+- Lines (implemented instead of GET/PUT `/areas`, `/security`, `/bank-accounts`; lines are never deleted): `GET /customers/{brnch}/{code}/lines/{areas|security|bank-accounts}` (`customer.view`; security adds `securityTotal` of active lines, BR-CUS-06), `POST …/lines/{kind}` (`customer.update`; body `{ geoCode }` area or city · `{ description, amount }` · `{ bankCode, accountNo, branchName }`), `POST …/lines/{kind}/{key}/deactivate` · `/activate`. Contacts and notification preferences are fields of the customer (Contacts tab).
 
 ## 6. SRF
 
