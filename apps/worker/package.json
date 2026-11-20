@@ -7,15 +7,17 @@
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --watch src/index.js",
     "start": "node --env-file-if-exists=../../.env src/index.js",
-    "test": "vitest run --passWithNoTests",
-    "test:unit": "vitest run --passWithNoTests"
+    "test": "vitest run",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@dcl/api": "workspace:*",
+    "@dcl/pdf-templates": "workspace:*",
     "@dcl/shared": "workspace:*",
     "bullmq": "6.7.8",
     "ioredis": "5.11.1",
-    "pino": "10.4.0"
+    "pino": "10.4.0",
+    "playwright": "1.65.1"
   },
   "devDependencies": {
     "vitest": "5.1.1"

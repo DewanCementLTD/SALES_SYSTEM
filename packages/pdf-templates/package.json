@@ -1,0 +1,22 @@
+{
+  "name": "@dcl/pdf-templates",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./*": "./src/*.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@dcl/shared": "workspace:*",
+    "bwip-js": "4.11.4",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "vitest": "5.1.1"
+  }
+}

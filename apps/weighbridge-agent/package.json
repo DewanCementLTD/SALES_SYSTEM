@@ -1,0 +1,16 @@
+{
+  "name": "@dcl/weighbridge-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Weighbridge PC service: serial/TCP indicator reader, stable detection, local WebSocket, signed upload (TASKS P3-02).",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "vitest": "5.1.1"
+  }
+}

@@ -66,6 +66,9 @@ REST/JSON API served by `apps/api` (Fastify). Base path **`/api/v1`**. The live 
 | GET/POST/PUT | `/admin/print-texts`, `/admin/message-templates`, `/admin/gl-map`                 | `admin.print_texts` / `admin.templates` / `admin.gl_map`                                                                                       |
 | GET/POST/PUT | `/admin/approval-rules`                                                           | `admin.approval_rules`                                                                                                                         |
 | GET          | `/audit?entity=&key=&user=&from=&to=&action=`                                     | `audit.view`                                                                                                                                   |
+| GET          | `/admin/outbox?status=`                                                           | `admin.settings` — notifications/jobs incl. FAILED and DEAD (P0-13)                                                                            |
+| POST         | `/admin/pdf-test`                                                                 | `admin.settings` — queues a sample PDF through outbox → worker → Chromium → storage (P0-15 self-test)                                          |
+| GET          | `/files/{attId}`                                                                  | print permission of the owning entity (e.g. `do.print`), branch-scoped; streams the stored PDF; audited as PRINT (P0-15)                       |
 
 ## 4. Masters & pricing
 

@@ -14,6 +14,7 @@ import {
 } from '@dcl/api/modules/outbox/service';
 import { systemClock } from '@dcl/shared';
 import { createSmsDriver } from './drivers/sms.js';
+import { closeBrowser, createPdfProcessor } from './pdf.js';
 
 const config = loadConfig({ ...process.env, DB_POOL_MAX: process.env.WORKER_DB_POOL_MAX ?? '6' });
 const log = pino({
@@ -42,6 +43,13 @@ const sms = createSmsDriver(process.env, log);
 
 /** @type {Record<string, (job: import('bullmq').Job) => Promise<unknown>>} */
 const processors = {
+  pdf: createPdfProcessor({
+    db,
+    storageDir: config.STORAGE_DIR,
+    qrSecret: config.QR_SECRET,
+    clock: systemClock,
+    log,
+  }),
   sms: async (job) => {
     const { recipient, payload, eventType } = job.data;
     const text = payload?.text ?? `DCL: ${eventType}`;
@@ -111,6 +119,7 @@ async function shutdown(signal) {
   log.info({ signal }, 'worker stopping');
   await Promise.allSettled(workers.map((w) => w.close()));
   await Promise.allSettled(Object.values(queues).map((q) => q.close()));
+  await closeBrowser().catch(() => {});
   await db.close(10);
   process.exit(0);
 }

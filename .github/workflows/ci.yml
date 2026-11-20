@@ -1,0 +1,48 @@
+# CI (TASKS P0-02). GitHub-hosted runners cannot reach the Oracle test server, so this workflow runs
+# everything that needs no database: lint, format, unit tests, web build. Integration tests (Oracle,
+# rollback-only) and Playwright e2e run on the build server: `pnpm test` / `pnpm test:e2e`
+# (see README). A self-hosted runner on that server can run them here later (job `integration`).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: No TypeScript files (CLAUDE.md rule 1)
+        run: test -z "$(git ls-files '*.ts' '*.tsx')"
+      - run: pnpm lint
+      - run: pnpm format:check
+      - name: Unit tests
+        run: pnpm turbo run test:unit
+      - name: Build web
+        run: pnpm --filter @dcl/web build
+      - name: Dependency audit (report only)
+        run: pnpm audit --prod || true
+
+  integration:
+    # Enable when a self-hosted runner with access to the Oracle test server is registered.
+    if: false
+    runs-on: [self-hosted, dcl-oracle]
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @dcl/api test:int
+      - run: pnpm --filter @dcl/web build && pnpm test:e2e
