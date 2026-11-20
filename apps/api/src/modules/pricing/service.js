@@ -137,7 +137,7 @@ export async function listTradePrices(tx, o) {
   return { ...page, items: page.items.map(mapTp) };
 }
 
-async function setStatus(tx, brnch, priceCode, status, { usrid, now }) {
+export async function setStatus(tx, brnch, priceCode, status, { usrid, now }) {
   await tx.exec(
     `UPDATE TRADE_PRICE SET DOC_STATUS = :st, ROW_VER = ROW_VER + 1
        ${status === 'APPROVED' ? ', APPROVED_BY = :usr, APPROVED_ON = :now' : ', UPDATED_BY = :usr, UPDATED_ON = :now'}
@@ -151,8 +151,9 @@ async function setStatus(tx, brnch, priceCode, status, { usrid, now }) {
  * per key) and BR-PRC-03 (not above MRP); values from the effective product period.
  * @param {Tx} tx @param {{ usrid: string, audit: object, now: Date }} actor @param {number} brnch
  * @param {import('zod').infer<typeof import('@dcl/shared').zTradePriceRequest>} body
+ * @param {{ approval?: boolean }} [opts] approval false = insert only (the Excel import asks once)
  */
-export async function requestTradePrice(tx, actor, brnch, body) {
+export async function requestTradePrice(tx, actor, brnch, body, { approval = true } = {}) {
   const cust = await tx.one(
     `SELECT CUSTOMER_NAME, NVL(DOC_STATUS, CASE WHEN CLOSED = 'Y' THEN 'CLOSED' ELSE 'APPROVED' END) AS ST
        FROM CUSTOMER_INFO WHERE BRNCH = :b AND CUSTOMER_CODE = :c FOR UPDATE`,
@@ -258,6 +259,7 @@ export async function requestTradePrice(tx, actor, brnch, body) {
     brnch,
     newValues: { ...body, priceCode: code, period: period.period },
   });
+  if (!approval) return { priceCode: code, tradePrice: null, requestId: null };
   const r = await requestApproval(
     tx,
     { ...actor.audit, now: actor.now },

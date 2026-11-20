@@ -43,17 +43,18 @@ export function refreshSession() {
  * @returns {Promise<any>}
  */
 export async function api(path, { method = 'GET', body, headers = {}, signal, retry = true } = {}) {
+  const form = typeof FormData !== 'undefined' && body instanceof FormData; // file uploads go as-is
   const res = await fetch(`/api/v1${path}`, {
     method,
     credentials: 'include',
     signal,
     headers: {
       accept: 'application/json',
-      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(body !== undefined && !form ? { 'content-type': 'application/json' } : {}),
       ...(method !== 'GET' ? { 'x-csrf-token': readCookie('csrf') } : {}),
       ...headers,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   });
 
   if (

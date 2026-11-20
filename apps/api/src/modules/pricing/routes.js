@@ -3,6 +3,8 @@
 import { P, zIsoDate, zPageQuery, zTradePriceRequest } from '@dcl/shared';
 import { z } from 'zod';
 import { resolveListBranches } from '../../lib/branch-scope.js';
+import { Errors } from '../../lib/errors.js';
+import * as imp from './import.js';
 import * as svc from './service.js';
 
 const zM = z.string().nullable();
@@ -172,6 +174,95 @@ export default async function pricingRoutes(app) {
             request.body,
           ),
         request.txOpts('pricing.create'),
+      );
+      return reply.status(201).send(res);
+    },
+  );
+
+  // --- Excel import (preview → commit) ---
+  const zPreviewRow = z.object({
+    row: z.number(),
+    customerCode: z.string(),
+    productCode: z.string(),
+    geoCode: z.string(),
+    invoicePrice: z.string(),
+    efDate: z.string(),
+    target: z.string().optional(),
+    ok: z.boolean(),
+    priceCode: z.string().optional(),
+    error: z.string().optional(),
+    ruleId: z.string().nullable().optional(),
+  });
+  const importActor = (request) => ({
+    usrid: request.session.usrid,
+    audit: request.ctx(),
+    now: app.clock.now(),
+  });
+
+  app.post(
+    '/pricing/trade-prices/import',
+    {
+      config: { permission: P.pricing.import },
+      schema: {
+        tags,
+        summary: `Upload .xlsx (columns ${imp.IMPORT_COLUMNS.join(', ')}) → preview; importId only when every row is valid`,
+        consumes: ['multipart/form-data'],
+        response: {
+          200: z.object({
+            importId: z.string().nullable(),
+            total: z.number(),
+            valid: z.number(),
+            rows: z.array(zPreviewRow),
+          }),
+        },
+      },
+    },
+    async (request) => {
+      const file = await request.file();
+      if (!file) throw Errors.validation('Attach the .xlsx file');
+      const rows = await imp.parseWorkbook(await file.toBuffer());
+      return app.db.read(
+        (tx) =>
+          imp.preview(
+            tx,
+            importActor(request),
+            request.session.brnch,
+            rows,
+            app.clock.now().getTime(),
+          ),
+        request.txOpts('pricing.import.preview'),
+      );
+    },
+  );
+
+  app.post(
+    '/pricing/trade-prices/import/:importId/commit',
+    {
+      config: { permission: P.pricing.import },
+      schema: {
+        tags,
+        summary: 'Save a clean preview: all prices + one RATE_CHANGE approval (TRADE_PRICE_IMPORT)',
+        params: z.object({ importId: z.string().uuid() }),
+        response: {
+          201: z.object({
+            created: z.number(),
+            priceCodes: z.array(z.string()),
+            requestId: z.number().nullable(),
+          }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const res = await app.db.withTx(
+        (tx) =>
+          imp.commit(
+            tx,
+            importActor(request),
+            request.session.brnch,
+            request.params.importId,
+            app.clock.now().getTime(),
+          ),
+        request.txOpts('pricing.import.commit'),
       );
       return reply.status(201).send(res);
     },

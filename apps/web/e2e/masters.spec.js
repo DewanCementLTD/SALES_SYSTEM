@@ -63,7 +63,7 @@ test('P1-01: products & periods are read-only and show the effective-period note
 
 test('unbuilt masters still show the planned screen', async ({ page }) => {
   await login(page);
-  await page.goto('/masters/trade-prices');
+  await page.goto('/masters/rate-sheets');
   await expect(page.getByText(/Planned for P1/)).toBeVisible();
 });
 
@@ -104,4 +104,20 @@ test('P1-05: tax rates — WHT tab and product periods', async ({ page }) => {
   await page.getByRole('option', { name: /^OPC ·/ }).click();
   await expect(page.getByRole('cell', { name: '4000.00' }).first()).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/16-tax-rates.png` });
+});
+
+test('P1-06: trade prices — list, history, import panel', async ({ page }) => {
+  await login(page);
+  await page.goto('/masters/trade-prices');
+  await expect(page.getByRole('heading', { level: 1, name: 'Trade prices' })).toBeVisible();
+  await expect(page.getByRole('cell').first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/17-trade-prices.png` });
+  await page
+    .getByRole('button', { name: /^History of / })
+    .first()
+    .click();
+  await expect(page.getByRole('dialog')).toContainText('Price history');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Import from Excel' }).click();
+  await expect(page.getByLabel('Workbook (.xlsx)')).toBeVisible();
 });

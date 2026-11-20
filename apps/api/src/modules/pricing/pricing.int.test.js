@@ -123,3 +123,56 @@ describe('trade prices (P1-06)', () => {
     });
   });
 });
+
+async function xlsx(rows) {
+  const { default: ExcelJS } = await import('exceljs');
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('prices');
+  ws.addRow(['customer_code', 'product_code', 'geo_code', 'price', 'effective_from']);
+  for (const r of rows) ws.addRow(r);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+function multipart(buf) {
+  const b = '----dcltest';
+  const head = `--${b}\r\nContent-Disposition: form-data; name="file"; filename="prices.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n`;
+  return {
+    body: Buffer.concat([Buffer.from(head), buf, Buffer.from(`\r\n--${b}--\r\n`)]),
+    headers: { 'content-type': `multipart/form-data; boundary=${b}` },
+  };
+}
+
+describe('trade price import (P1-06)', () => {
+  it('preview flags bad rows; clean file commits with one approval for the batch', async () => {
+    const maker = await as({ 2: ['SALES_MANAGER'] });
+    const bad = multipart(
+      await xlsx([
+        [KEY.customer, 'OPS', KEY.geoCode, '26000', '2026-12-01'],
+        [KEY.customer, 'OPS', KEY.geoCode, '99999', '2026-12-02'],
+      ]),
+    );
+    const p1 = await maker.post('/api/v1/pricing/trade-prices/import', bad.body, {
+      headers: bad.headers,
+    });
+    expect(p1.statusCode, p1.body).toBe(200);
+    expect(p1.json()).toMatchObject({ importId: null, total: 2, valid: 1 });
+    expect(p1.json().rows[1]).toMatchObject({ ok: false, ruleId: 'BR-PRC-03' });
+
+    const good = multipart(await xlsx([[KEY.customer, 'OPS', KEY.geoCode, '26000', '2026-12-01']]));
+    const p2 = (
+      await maker.post('/api/v1/pricing/trade-prices/import', good.body, { headers: good.headers })
+    ).json();
+    expect(p2.importId).toEqual(expect.any(String));
+    const c = await maker.post(`/api/v1/pricing/trade-prices/import/${p2.importId}/commit`, {});
+    expect(c.statusCode, c.body).toBe(201);
+    expect(c.json()).toMatchObject({
+      created: 1,
+      priceCodes: ['ABABDOPS19'],
+      requestId: expect.any(Number),
+    });
+
+    const fm = await as({ 2: ['FINANCE_MANAGER'] });
+    await fm.post(`/api/v1/approvals/${c.json().requestId}/approve`, {});
+    const q = await maker.get(`/api/v1/pricing/quote?${qs({ ...KEY, date: '2026-12-05' })}`);
+    expect(q.json().tradePrice.priceCode).toBe('ABABDOPS19');
+  });
+});

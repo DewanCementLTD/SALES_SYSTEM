@@ -201,7 +201,13 @@ export const NAV = [
         phase: 'P1',
         built: true,
       },
-      { label: 'Trade prices', href: '/masters/trade-prices', perm: ['pricing.view'], phase: 'P1' },
+      {
+        label: 'Trade prices',
+        href: '/masters/trade-prices',
+        perm: ['pricing.view'],
+        phase: 'P1',
+        built: true,
+      },
       {
         label: 'City rate sheets',
         href: '/masters/rate-sheets',

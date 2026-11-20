@@ -49,7 +49,8 @@ test('P0-16: admin screens load with data from the API', async ({ page }) => {
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     await expect(page.getByRole('alert').filter({ hasText: /./ })).toHaveCount(0);
     // no networkidle: live updates keep an EventSource open; wait for a rendered table/section
-    await expect(page.locator('main section').first()).toBeVisible();
+    // (the sandbox keeps one transaction per run: the inbox may already list requests as cards)
+    await expect(page.locator('main section, main a[href^="/approvals/"]').first()).toBeVisible();
     await expect(page.getByLabel('Loading')).toHaveCount(0);
     await page.screenshot({ path: `${SHOTS}/${shot}.png`, fullPage: false });
   }
