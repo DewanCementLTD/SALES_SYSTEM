@@ -187,21 +187,22 @@ Links to legacy tables are by column (no FK), because legacy rows break them; se
 
 ## 4. DOC_SEQUENCE document types
 
-| DOC_TYPE | Document             | Table / column                                            |
-| -------- | -------------------- | --------------------------------------------------------- |
-| SRF      | Sales request        | SALES_REQUEST_MASTER.SRF_NO                               |
-| OC       | Order confirmation   | ORDER_CONFIRM.ORDER_NO                                    |
-| BRV      | Bank receipt         | CASH_CHEQUE_RECEIPTS.RECEIPT_NO                           |
-| DO       | Delivery order       | DELIVERY_ORDER.DEL_ORDER_NO                               |
-| PMT      | Permit               | PERMIT_MST_CITY.PERMIT_NO                                 |
-| DC       | Delivery challan     | FH_DELIVERY_CHALLAN.DC_NO                                 |
-| DM       | Delivery memo        | FH_DELIVERY_MEMO.DM_NO                                    |
-| INV      | Sales invoice        | SALES_INVOICE.INVOICE_NO                                  |
-| CN / DN  | Credit / debit note  | CREDIT_NOTE.SRL_NO (one series, `DB_CR_CD` distinguishes) |
-| OCA      | Order cancel advice  | ORDER_CANCEL_MASTER.OC_ADVISE_NO                          |
-| RCX      | Receipt cancel       | RECEIPT_CANCEL_MASTER.CANCEL_NO                           |
-| DOA      | DO adjustment advice | DO_ADJUSTMENT.ADVICE_NO                                   |
-| INC      | Incentive run        | INCENTIVE.SRL_NO                                          |
+| DOC_TYPE | Document              | Table / column                                                     |
+| -------- | --------------------- | ------------------------------------------------------------------ |
+| SRF      | Sales request         | SALES_REQUEST_MASTER.SRF_NO                                        |
+| OC       | Order confirmation    | ORDER_CONFIRM.ORDER_NO                                             |
+| BRV      | Bank receipt          | CASH_CHEQUE_RECEIPTS.RECEIPT_NO                                    |
+| DO       | Delivery order        | DELIVERY_ORDER.DEL_ORDER_NO                                        |
+| PMT      | Permit                | PERMIT_MST_CITY.PERMIT_NO                                          |
+| DC       | Delivery challan      | FH_DELIVERY_CHALLAN.DC_NO                                          |
+| DM       | Delivery memo         | FH_DELIVERY_MEMO.DM_NO                                             |
+| INV      | Sales invoice         | SALES_INVOICE.INVOICE_NO                                           |
+| CN / DN  | Credit / debit note   | CREDIT_NOTE.SRL_NO (one series, `DB_CR_CD` distinguishes)          |
+| OCA      | Order cancel advice   | ORDER_CANCEL_MASTER.OC_ADVISE_NO                                   |
+| RCX      | Receipt cancel        | RECEIPT_CANCEL_MASTER.CANCEL_NO                                    |
+| DOA      | DO adjustment advice  | DO_ADJUSTMENT.ADVICE_NO                                            |
+| INC      | Incentive run         | INCENTIVE.SRL_NO                                                   |
+| CLM      | Credit limit document | CREDIT_LIMITS_F.SERNO (P1-04; seeded from legacy max, Hattar 4565) |
 
 Migration seeds `LAST_NO` = max legacy number per (branch, year, type) so numbering continues (BR-NUM-04).
 

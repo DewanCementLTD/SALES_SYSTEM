@@ -24,6 +24,7 @@ export const LEGACY_NUMBER_SOURCES = {
   OCA: { table: 'ORDER_CANCEL_MASTER', col: 'OC_ADVISE_NO', yearCol: 'YEAR' },
   DOA: { table: 'DO_ADJUSTMENT', col: 'ADVICE_NO' },
   INC: { table: 'INCENTIVE', col: 'SRL_NO' },
+  CLM: { table: 'CREDIT_LIMITS_F', col: 'SERNO' },
   // RCX (RECEIPT_CANCEL_MASTER.CANCEL_NO) is text 'YYYY-NNNN'; GP, CXL are new: start from 0.
 };
 

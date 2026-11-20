@@ -26,36 +26,36 @@ Language: **JavaScript only** (ES2023, ESM). No TypeScript files. Types are docu
 
 ## 2. Technology choices (with reasons)
 
-| Concern | Choice | Why |
-|---|---|---|
-| Monorepo | **pnpm workspaces + Turborepo** | Shared rules/schemas between API, web, worker, agent; cached builds |
-| Runtime | **Node.js 22 LTS** | Current LTS, native fetch, test runner fallback |
-| API | **Fastify 5** + `@fastify/cookie`, `@fastify/helmet`, `@fastify/cors`, `@fastify/rate-limit`, `@fastify/multipart`, `@fastify/swagger` + `@fastify/swagger-ui`, `fastify-type-provider-zod` | Fast, schema-first, plugin model, first-class OpenAPI |
-| Validation | **Zod** (shared schemas in `packages/shared`) | One schema for API validation, OpenAPI and React Hook Form |
-| Oracle driver | **node-oracledb 6** — **Thin mode** for 19c; **Thick mode** (Instant Client) when `ORACLE_CLIENT_MODE=thick` (required for 11g) | Thin needs no client install; 11g still possible |
-| Data access | **Knex** (oracledb dialect) as query builder + hand-written SQL for reports; repository per aggregate | ORMs (Prisma etc.) do not support Oracle/legacy keys well; Knex gives transactions and safe binds |
-| DB migrations | Plain numbered **SQL files** in `db/migrations` applied by `pnpm db:migrate` (tracks `SCHEMA_VERSION`) | DBA-reviewable, 11g-compatible, same files run by SQL*Plus if needed |
-| Money/decimal | **decimal.js** | No float errors in tax/ledger |
-| Dates | **date-fns** + `date-fns-tz` (Asia/Karachi) | Small, tree-shakeable |
-| Auth | Own JWT (`jose`) access token 15 min + rotating refresh token (DB) in **httpOnly Secure SameSite=Lax cookies**; passwords **argon2id** (`@node-rs/argon2`); TOTP (`otplib`) optional | Full control, no external IdP needed on LAN |
-| Authorization | Permission keys (`module.action`) + branch scope, checked by a Fastify `preHandler` and again in services | See PERMISSIONS.md |
-| Jobs | **BullMQ + Redis 7** | Retries, scheduling, rate-limited queues (FBR, SMS) |
-| PDF | HTML templates (React server components rendered to HTML string) → **Playwright Chromium** PDF in worker; `qrcode` for QR, `bwip-js` for barcodes | Pixel-accurate prints (DO, permit, DC, invoice, reports) |
-| Excel | **ExcelJS** | Styled exports, streaming for big reports |
-| Email | **Nodemailer** using the user's SMTP account (encrypted at rest) | Spec 10.4 |
-| SMS | Adapter interface (`console`, `http-generic` driver configured by URL template) | Provider not chosen yet |
-| Logging | **pino** (+ `pino-pretty` in dev), request id, user, branch | Structured logs |
-| Metrics/health | `prom-client` `/metrics`, `/health/live`, `/health/ready` (DB + Redis ping) | Ops |
-| Errors | RFC 7807 `application/problem+json`; optional Sentry | Consistent errors |
-| Web | **Next.js 15 (App Router, JS/JSX)**, **Tailwind CSS v4**, **shadcn/ui** (generated as `.jsx`), **TanStack Query v5**, **TanStack Table v8** (+ `@tanstack/react-virtual`), **React Hook Form** + `@hookform/resolvers/zod`, **Recharts**, **sonner** toasts, **cmdk** command palette, `lucide-react` icons, `nuqs` URL state | Modern, fast, accessible components |
-| PWA/offline | **Serwist** (service worker) + **Dexie** (IndexedDB) outbox | Gate/weighing offline |
-| QR scanning | `@zxing/browser` (camera) + keyboard-wedge USB scanners | Works on tablets and PCs |
-| Real-time | Server-Sent Events from API (`/api/v1/events`) | Dashboards, plant board; simpler than WebSockets through proxies |
-| Weighbridge agent | Node 22 + **serialport** + `net` + **better-sqlite3** buffer + `ws` local server; packaged as Windows service with **node-windows** (or NSSM) | Runs beside indicator |
-| Tests | **Vitest** (unit/integration), `fastify.inject` for API, **Testcontainers** `gvenzl/oracle-free` (23ai Free, run in 19c-compatible mode by only using 11g features) or a shared test schema, **Playwright** e2e, **MSW** for web mocks | |
-| Lint/format | ESLint 9 flat config (`eslint-plugin-n`, `eslint-plugin-react`, `react-hooks`, `jsx-a11y`, `import`), Prettier, `lint-staged` + **husky**, commitlint (Conventional Commits) | |
-| CI | GitHub Actions: install → lint → unit → integration (Oracle container) → build → e2e (smoke) | |
-| Deploy | Windows Server or Linux; **PM2** (or Docker Compose) for api/worker/web; **Nginx/Apache reverse proxy** with TLS (`sales.dewancement.com`) | Matches existing infra (Apache reverse proxy used today) |
+| Concern           | Choice                                                                                                                                                                                                                                                                                                                        | Why                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Monorepo          | **pnpm workspaces + Turborepo**                                                                                                                                                                                                                                                                                               | Shared rules/schemas between API, web, worker, agent; cached builds                               |
+| Runtime           | **Node.js 22 LTS**                                                                                                                                                                                                                                                                                                            | Current LTS, native fetch, test runner fallback                                                   |
+| API               | **Fastify 5** + `@fastify/cookie`, `@fastify/helmet`, `@fastify/cors`, `@fastify/rate-limit`, `@fastify/multipart`, `@fastify/swagger` + `@fastify/swagger-ui`, `fastify-type-provider-zod`                                                                                                                                   | Fast, schema-first, plugin model, first-class OpenAPI                                             |
+| Validation        | **Zod** (shared schemas in `packages/shared`)                                                                                                                                                                                                                                                                                 | One schema for API validation, OpenAPI and React Hook Form                                        |
+| Oracle driver     | **node-oracledb 6** — **Thin mode** for 19c; **Thick mode** (Instant Client) when `ORACLE_CLIENT_MODE=thick` (required for 11g)                                                                                                                                                                                               | Thin needs no client install; 11g still possible                                                  |
+| Data access       | **Knex** (oracledb dialect) as query builder + hand-written SQL for reports; repository per aggregate                                                                                                                                                                                                                         | ORMs (Prisma etc.) do not support Oracle/legacy keys well; Knex gives transactions and safe binds |
+| DB migrations     | Plain numbered **SQL files** in `db/migrations` applied by `pnpm db:migrate` (tracks `SCHEMA_VERSION`)                                                                                                                                                                                                                        | DBA-reviewable, 11g-compatible, same files run by SQL*Plus if needed                              |
+| Money/decimal     | **decimal.js**                                                                                                                                                                                                                                                                                                                | No float errors in tax/ledger                                                                     |
+| Dates             | **date-fns** + `date-fns-tz` (Asia/Karachi)                                                                                                                                                                                                                                                                                   | Small, tree-shakeable                                                                             |
+| Auth              | Own JWT (`jose`) access token 15 min + rotating refresh token (DB) in **httpOnly Secure SameSite=Lax cookies**; passwords **argon2id** (`@node-rs/argon2`); TOTP (`otplib`) optional                                                                                                                                          | Full control, no external IdP needed on LAN                                                       |
+| Authorization     | Permission keys (`module.action`) + branch scope, checked by a Fastify `preHandler` and again in services                                                                                                                                                                                                                     | See PERMISSIONS.md                                                                                |
+| Jobs              | **BullMQ + Redis 7**                                                                                                                                                                                                                                                                                                          | Retries, scheduling, rate-limited queues (FBR, SMS)                                               |
+| PDF               | HTML templates (React server components rendered to HTML string) → **Playwright Chromium** PDF in worker; `qrcode` for QR, `bwip-js` for barcodes                                                                                                                                                                             | Pixel-accurate prints (DO, permit, DC, invoice, reports)                                          |
+| Excel             | **ExcelJS**                                                                                                                                                                                                                                                                                                                   | Styled exports, streaming for big reports                                                         |
+| Email             | **Nodemailer** using the user's SMTP account (encrypted at rest)                                                                                                                                                                                                                                                              | Spec 10.4                                                                                         |
+| SMS               | Adapter interface (`console`, `http-generic` driver configured by URL template)                                                                                                                                                                                                                                               | Provider not chosen yet                                                                           |
+| Logging           | **pino** (+ `pino-pretty` in dev), request id, user, branch                                                                                                                                                                                                                                                                   | Structured logs                                                                                   |
+| Metrics/health    | `prom-client` `/metrics`, `/health/live`, `/health/ready` (DB + Redis ping)                                                                                                                                                                                                                                                   | Ops                                                                                               |
+| Errors            | RFC 7807 `application/problem+json`; optional Sentry                                                                                                                                                                                                                                                                          | Consistent errors                                                                                 |
+| Web               | **Next.js 15 (App Router, JS/JSX)**, **Tailwind CSS v4**, **shadcn/ui** (generated as `.jsx`), **TanStack Query v5**, **TanStack Table v8** (+ `@tanstack/react-virtual`), **React Hook Form** + `@hookform/resolvers/zod`, **Recharts**, **sonner** toasts, **cmdk** command palette, `lucide-react` icons, `nuqs` URL state | Modern, fast, accessible components                                                               |
+| PWA/offline       | **Serwist** (service worker) + **Dexie** (IndexedDB) outbox                                                                                                                                                                                                                                                                   | Gate/weighing offline                                                                             |
+| QR scanning       | `@zxing/browser` (camera) + keyboard-wedge USB scanners                                                                                                                                                                                                                                                                       | Works on tablets and PCs                                                                          |
+| Real-time         | Server-Sent Events from API (`/api/v1/events`)                                                                                                                                                                                                                                                                                | Dashboards, plant board; simpler than WebSockets through proxies                                  |
+| Weighbridge agent | Node 22 + **serialport** + `net` + **better-sqlite3** buffer + `ws` local server; packaged as Windows service with **node-windows** (or NSSM)                                                                                                                                                                                 | Runs beside indicator                                                                             |
+| Tests             | **Vitest** (unit/integration), `fastify.inject` for API, **Testcontainers** `gvenzl/oracle-free` (23ai Free, run in 19c-compatible mode by only using 11g features) or a shared test schema, **Playwright** e2e, **MSW** for web mocks                                                                                        |                                                                                                   |
+| Lint/format       | ESLint 9 flat config (`eslint-plugin-n`, `eslint-plugin-react`, `react-hooks`, `jsx-a11y`, `import`), Prettier, `lint-staged` + **husky**, commitlint (Conventional Commits)                                                                                                                                                  |                                                                                                   |
+| CI                | GitHub Actions: install → lint → unit → integration (Oracle container) → build → e2e (smoke)                                                                                                                                                                                                                                  |                                                                                                   |
+| Deploy            | Windows Server or Linux; **PM2** (or Docker Compose) for api/worker/web; **Nginx/Apache reverse proxy** with TLS (`sales.dewancement.com`)                                                                                                                                                                                    | Matches existing infra (Apache reverse proxy used today)                                          |
 
 ## 3. Repository layout
 
@@ -100,6 +100,7 @@ route (HTTP, auth, validation)  →  service (business rules, transactions, stat
                                       ↘ packages/shared rule functions (pure)
                                       ↘ outbox (notifications/jobs) written in the same transaction
 ```
+
 - Routes never contain SQL or rules. Repos never contain rules. Services never touch `req`/`reply`.
 - **One DB transaction per command** (`withTx(async (tx) => …)`), including: number allocation, document rows, ledger rows, audit rows, outbox rows. Commit or nothing.
 - **Optimistic locking**: every editable new-style row has `ROW_VER`; updates use `WHERE ROW_VER = :ver` and the API requires `If-Match`. Conflicts → 409.
@@ -118,6 +119,7 @@ route (HTTP, auth, validation)  →  service (business rules, transactions, stat
 ## 6. Key flows (sequence)
 
 ### 6.1 OC confirmation
+
 ```
 POST /oc/{brnch}/{no}/confirm
  └ tx:
@@ -131,6 +133,7 @@ POST /oc/{brnch}/{no}/confirm
 ```
 
 ### 6.2 Plant
+
 ```
 Gate-in (scan QR) → POST /plant/gate-passes  [Idempotency-Key]
    validate QR sig, doc state, branch, remaining qty, same customer/type/destination
@@ -144,6 +147,7 @@ Exit → POST /plant/gate-passes/{id}/exit  (checklist BR-EXIT-02) → EXITED, o
 ```
 
 ### 6.3 Offline sync
+
 ```
 PWA Dexie outbox: [{clientId(UUID v7), type, payload, deviceTime}]
 online → POST /plant/sync (batch ≤ 50, ordered) → per event: idempotent apply | conflict → SYNC_CONFLICT queue
@@ -151,6 +155,7 @@ server response maps clientId → server ids (gate pass id, DC no) → PWA updat
 ```
 
 ### 6.4 Weighbridge agent
+
 ```
 indicator --(serial/TCP frames)--> parser profile (regex) --> reading {kg, stable, ts}
   → ws://localhost:7071 broadcast (weighing screen shows live digits)
@@ -177,27 +182,27 @@ API verifies HMAC + device registered to the branch → WEIGH_TICKET(SOURCE=DEVI
 
 ## 9. Environments & configuration
 
-| Env | DB | Notes |
-|---|---|---|
-| local | Oracle Free container or shared dev schema | `pnpm dev` runs api, worker, web, fake weighbridge |
-| test/CI | Oracle container, schema built from db/01 + 05 + seed | |
-| staging | copy of SALES_NEW with Sep 2026 data | FBR sandbox |
-| production | Oracle 19c, `SALES_NEW` (rename per DBA) | FBR production per branch |
+| Env        | DB                                                    | Notes                                              |
+| ---------- | ----------------------------------------------------- | -------------------------------------------------- |
+| local      | Oracle Free container or shared dev schema            | `pnpm dev` runs api, worker, web, fake weighbridge |
+| test/CI    | Oracle container, schema built from db/01 + 05 + seed |                                                    |
+| staging    | copy of SALES_NEW with Sep 2026 data                  | FBR sandbox                                        |
+| production | Oracle 19c, `SALES_NEW` (rename per DBA)              | FBR production per branch                          |
 
 Required env vars (documented in `.env.example`): `DATABASE_USER/PASSWORD/CONNECT_STRING`, `ORACLE_CLIENT_MODE`, `ORACLE_LIB_DIR`, `REDIS_URL`, `JWT_SECRET`, `QR_SECRET`, `APP_ENC_KEY`, `WEB_ORIGIN`, `PUBLIC_BASE_URL`, `FBR_*` (per branch), `SMS_DRIVER`, `SMS_URL_TEMPLATE`, `PDF_CHROMIUM_PATH`.
 
 ## 10. Architecture decisions (ADR summary)
 
-| # | Decision | Alternatives rejected |
-|---|---|---|
-| ADR-1 | Keep the unified legacy-named schema; add new tables/columns | Clean-room schema (would break migration & old reports) |
-| ADR-2 | Fastify over Express/NestJS | Express (slower, no schema-first), NestJS (TS-centric, decorators awkward in JS) |
-| ADR-3 | Knex + SQL, no ORM | Prisma/TypeORM (Oracle/legacy composite keys support poor) |
-| ADR-4 | Gap-free numbers via `DOC_SEQUENCE … FOR UPDATE` in the business tx | Oracle sequences (gaps on rollback) |
-| ADR-5 | Posted ledger table, written atomically | Ledger by query only (slow, can miss entries) |
-| ADR-6 | Transactional outbox for notifications/FBR/PDF | Direct calls inside requests (lost on crash) |
-| ADR-7 | Signed QR (HMAC) verified offline | Plain doc number (forgeable) |
-| ADR-8 | DC allocated at gate-in, invoice number at finalisation | Invoice at gate-in (gaps when aborted) |
-| ADR-9 | SSE for live boards | WebSockets (proxy complexity) |
-| ADR-10 | Oracle 19c target, 11g-compatible SQL, Thin/Thick switch | 11g-only (Thick mandatory, EOL) |
-| ADR-11 | JavaScript + JSDoc + Zod (no TS) | TypeScript (client decision) |
+| #      | Decision                                                            | Alternatives rejected                                                            |
+| ------ | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| ADR-1  | Keep the unified legacy-named schema; add new tables/columns        | Clean-room schema (would break migration & old reports)                          |
+| ADR-2  | Fastify over Express/NestJS                                         | Express (slower, no schema-first), NestJS (TS-centric, decorators awkward in JS) |
+| ADR-3  | Knex + SQL, no ORM                                                  | Prisma/TypeORM (Oracle/legacy composite keys support poor)                       |
+| ADR-4  | Gap-free numbers via `DOC_SEQUENCE … FOR UPDATE` in the business tx | Oracle sequences (gaps on rollback)                                              |
+| ADR-5  | Posted ledger table, written atomically                             | Ledger by query only (slow, can miss entries)                                    |
+| ADR-6  | Transactional outbox for notifications/FBR/PDF                      | Direct calls inside requests (lost on crash)                                     |
+| ADR-7  | Signed QR (HMAC) verified offline                                   | Plain doc number (forgeable)                                                     |
+| ADR-8  | DC allocated at gate-in, invoice number at finalisation             | Invoice at gate-in (gaps when aborted)                                           |
+| ADR-9  | SSE for live boards                                                 | WebSockets (proxy complexity)                                                    |
+| ADR-10 | Oracle 19c target, 11g-compatible SQL, Thin/Thick switch            | 11g-only (Thick mandatory, EOL)                                                  |
+| ADR-11 | JavaScript + JSDoc + Zod (no TS)                                    | TypeScript (client decision)                                                     |

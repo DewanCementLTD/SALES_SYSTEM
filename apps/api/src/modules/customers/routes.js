@@ -4,6 +4,7 @@ import {
   CUSTOMER_STATUS,
   P,
   zBrnch,
+  zCreditLimitRequest,
   zCustomerCreate,
   zCustomerPatch,
   zPageQuery,
@@ -14,6 +15,7 @@ import { resolveListBranches } from '../../lib/branch-scope.js';
 import { Errors } from '../../lib/errors.js';
 import { etag, ifMatch } from '../../lib/http.js';
 import { userRoles } from '../rbac/repo.js';
+import * as credit from './credit.js';
 import * as lines from './lines.js';
 import * as repo from './repo.js';
 import * as svc from './service.js';
@@ -421,6 +423,152 @@ export default async function customerRoutes(app) {
           request.txOpts(`customers.line.${cmd}`),
         );
       },
+    );
+  }
+
+  // --- credit limits (BR-CUS-07, P1-04) ---
+  const zMoneyN = z.string().nullable();
+  const zDoc = z.object({
+    brnch: z.number(),
+    serno: z.number(),
+    customerCode: z.string(),
+    customerName: z.string().nullable(),
+    date: z.date().nullable(),
+    creditType: z.string().nullable(),
+    lastApproved: zMoneyN,
+    amount: zMoneyN,
+    ocBalance: zMoneyN,
+    remark: z.string().nullable(),
+    status: z.string(),
+    createdBy: z.string().nullable(),
+    rowVer: z.number(),
+  });
+
+  app.get(
+    '/customers/:brnch/:code/credit-limits',
+    {
+      config: { permission: P.customer.view },
+      schema: {
+        tags,
+        summary:
+          'Initial / current / availed / unused per credit type A–J, and Credit Limit documents',
+        params: zParams,
+        response: {
+          200: z.object({
+            hasCreditLimitsRow: z.boolean(),
+            legacyCreditLimit: zMoneyN,
+            totalCurrent: z.string(),
+            types: z.array(
+              z.object({
+                creditType: z.string(),
+                description: z.string(),
+                initial: zMoneyN,
+                current: zMoneyN,
+                availed: zMoneyN,
+                unused: z.string(),
+              }),
+            ),
+            documents: z.array(zDoc),
+          }),
+        },
+      },
+    },
+    async (request) =>
+      app.db.read(
+        (tx) => credit.creditOverview(tx, request.params.brnch, request.params.code),
+        request.txOpts('credit.overview'),
+      ),
+  );
+
+  app.post(
+    '/customers/:brnch/:code/credit-limits',
+    {
+      config: { permission: P.customer.credit_limit },
+      schema: {
+        tags,
+        summary: 'New Credit Limit document (number CLM) → approval CREDIT_LIMIT (BR-CUS-07)',
+        params: zParams,
+        body: zCreditLimitRequest,
+        response: { 201: z.object({ document: zDoc, requestId: z.number().nullable() }) },
+      },
+    },
+    async (request, reply) => {
+      const { brnch, code } = request.params;
+      const res = await app.db.withTx(
+        (tx) =>
+          credit.requestCreditLimit(
+            tx,
+            { ...actor(request), fiscalYear: request.session.fiscalYear },
+            brnch,
+            code,
+            request.body,
+          ),
+        request.txOpts('credit.request'),
+      );
+      return reply.status(201).send(res);
+    },
+  );
+
+  app.get(
+    '/credit-limits',
+    {
+      config: { permission: P.customer.view },
+      schema: {
+        tags,
+        summary: 'Credit Limit documents of my branches (newest 200)',
+        querystring: z.object({
+          brnch: z.union([z.literal('all'), z.coerce.number().int()]).optional(),
+          status: z.enum(['PENDING_APPROVAL', 'APPROVED', 'REJECTED']).optional(),
+        }),
+        response: { 200: z.object({ items: z.array(zDoc) }) },
+      },
+    },
+    async (request) => {
+      const branches = resolveListBranches(
+        {
+          brnch: request.session.brnch,
+          allowedBranches: await request.authz.branchesWith(P.customer.view),
+        },
+        request.query.brnch,
+      );
+      return app.db.read(
+        async (tx) => ({
+          items: await credit.documents(tx, { branches, status: request.query.status }),
+        }),
+        request.txOpts('credit.list'),
+      );
+    },
+  );
+
+  for (const [cmd, decision] of [
+    ['approve', 'APPROVED'],
+    ['reject', 'REJECTED'],
+  ]) {
+    app.post(
+      `/credit-limits/:brnch/:serno/${cmd}`,
+      {
+        config: { permission: P.customer.credit_limit_approve },
+        schema: {
+          tags,
+          summary: `${cmd === 'approve' ? 'Approve' : 'Reject'} a Credit Limit document (maker ≠ checker)`,
+          params: z.object({ brnch: zBrnch, serno: z.coerce.number().int().positive() }),
+          body: zDecision,
+          response: { 200: zDoc },
+        },
+      },
+      async (request) =>
+        app.db.withTx(
+          async (tx) =>
+            credit.decideCreditLimit(
+              tx,
+              decideCtx(request, tx),
+              request.params.brnch,
+              request.params.serno,
+              decision,
+              request.body?.comment ?? null,
+            ),
+          request.txOpts(`credit.${cmd}`),
+        ),
     );
   }
 }

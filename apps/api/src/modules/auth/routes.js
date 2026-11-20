@@ -118,7 +118,8 @@ export default async function authRoutes(app) {
       config: {
         public: true,
         csrf: false,
-        rateLimit: { max: 10, timeWindow: '1 minute' },
+        // per IP; the e2e sandbox raises it (many sign-ins from one browser in one minute)
+        rateLimit: { max: app.config.LOGIN_RATE_PER_MIN ?? 10, timeWindow: '1 minute' },
       },
       schema: {
         tags: ['auth'],

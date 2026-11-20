@@ -38,7 +38,11 @@ class SerialDb extends SavepointDb {
   }
 }
 
-const config = { ...testConfig(), LOG_LEVEL: process.env.E2E_LOG_LEVEL ?? 'warn' };
+const config = {
+  ...testConfig(),
+  LOG_LEVEL: process.env.E2E_LOG_LEVEL ?? 'warn',
+  LOGIN_RATE_PER_MIN: 200, // every e2e test signs in from the same browser IP
+};
 initOracleClient(config);
 const conn = await oracledb.getConnection({
   user: config.DATABASE_USER,

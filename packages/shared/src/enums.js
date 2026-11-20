@@ -24,6 +24,11 @@ export const STATE_MACHINES = Object.freeze({
     BLOCKED: ['APPROVED'],
     CLOSED: [],
   },
+  CREDIT_LIMIT: {
+    PENDING_APPROVAL: ['APPROVED', 'REJECTED'],
+    APPROVED: [],
+    REJECTED: [],
+  },
   SRF: {
     DRAFT: ['SUBMITTED', 'CANCELLED'],
     SUBMITTED: ['CONVERTED', 'CANCELLED'],
@@ -111,6 +116,7 @@ export function statusesOf(machine) {
 }
 
 export const CUSTOMER_STATUS = statusesOf('CUSTOMER');
+export const CREDIT_LIMIT_STATUS = statusesOf('CREDIT_LIMIT');
 export const SRF_STATUS = statusesOf('SRF');
 export const OC_STATUS = statusesOf('OC');
 export const BRV_STATUS = statusesOf('BRV');
@@ -166,6 +172,7 @@ export const DOC_TYPES = Object.freeze([
   'RCX',
   'DOA',
   'INC',
+  'CLM', // credit limit document (CREDIT_LIMITS_F.SERNO, P1-04)
 ]);
 
 /** Approval document types seeded by default (BR-APR-04). */

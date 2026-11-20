@@ -61,3 +61,14 @@ test('P1-03: create a customer — code preview, pending approval, contacts norm
   await expect(page.getByRole('cell', { name: 'CASH DEPOSIT' })).toBeVisible();
   await expect(page.getByText(/Total security deposit/)).toContainText('150,000');
 });
+
+test('P1-04: credit limits tab and documents page', async ({ page }) => {
+  await login(page);
+  await page.goto('/customers/1/199-120?tab=credit');
+  await expect(page.getByRole('cell', { name: /^A · / })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '81,052.40' })).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/15-customer-credit.png` });
+  await page.goto('/customers/credit-limits?status=ALL');
+  await expect(page.getByRole('heading', { level: 1, name: 'Credit limits' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Waiting for approval' })).toBeVisible();
+});

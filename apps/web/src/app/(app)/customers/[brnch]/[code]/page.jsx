@@ -12,6 +12,7 @@ import { parseAsString, useQueryState } from 'nuqs';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { CreditTab } from '@/components/customers/credit';
 import { LinesTab } from '@/components/customers/lines-tab';
 import { CustomerStatusBadge } from '@/components/customers/status';
 import { PageHeader, ProblemAlert, Section, StatusBadge } from '@/components/common/page';
@@ -403,6 +404,7 @@ export default function CustomerDetailPage() {
                     {t.label}
                   </TabsTrigger>
                 ))}
+                <TabsTrigger value="credit">Credit limits</TabsTrigger>
                 <TabsTrigger value="areas">Areas</TabsTrigger>
                 <TabsTrigger value="security">Security</TabsTrigger>
                 <TabsTrigger value="bank-accounts">Bank accounts</TabsTrigger>
@@ -422,6 +424,7 @@ export default function CustomerDetailPage() {
                   )}
                 </TabsContent>
               ))}
+              <TabsContent value="credit">{tab === 'credit' && <CreditTab c={c} />}</TabsContent>
               {['areas', 'security', 'bank-accounts'].map((k) => (
                 <TabsContent key={k} value={k}>
                   {tab === k && <LinesTab c={c} kind={k} canEdit={canEdit} />}

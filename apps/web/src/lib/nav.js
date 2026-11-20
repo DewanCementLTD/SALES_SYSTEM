@@ -141,6 +141,7 @@ export const NAV = [
         href: '/customers/credit-limits',
         perm: ['customer.credit_limit', 'customer.credit_limit_approve'],
         phase: 'P1',
+        built: true,
       },
       {
         label: 'Security deposits',
