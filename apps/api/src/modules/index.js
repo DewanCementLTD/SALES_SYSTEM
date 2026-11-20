@@ -3,6 +3,7 @@ import approvalRoutes from './approvals/routes.js';
 import auditRoutes from './audit/routes.js';
 import authRoutes from './auth/routes.js';
 import notificationRoutes from './notifications/routes.js';
+import outboxRoutes from './outbox/routes.js';
 import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
 import userRoutes from './users/routes.js';
@@ -16,4 +17,5 @@ export async function registerModules(app) {
   await app.register(auditRoutes, { prefix: '/api/v1/audit' });
   await app.register(approvalRoutes, { prefix: '/api/v1' });
   await app.register(notificationRoutes, { prefix: '/api/v1/notifications' });
+  await app.register(outboxRoutes, { prefix: '/api/v1/admin' });
 }
