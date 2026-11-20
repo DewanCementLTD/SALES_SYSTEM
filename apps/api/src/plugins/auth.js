@@ -55,30 +55,21 @@ export default fp(async (app) => {
       throw new AppError('password_change_required', 403, 'Change your password to continue.');
     }
 
-    // Lazily loaded authorisation data, cached for this request only.
-    const cache = new Map();
-    let branches = null;
+    // Authorisation data for this request, loaded ONCE here (one read, ≤ 2 branches) so route
+    // code never opens a second unit of work from inside its transaction (nested DB calls hold a
+    // second pooled connection and can deadlock under load).
+    const loaded = await app.db.read(async (tx) => {
+      const branches = (await userBranches(tx, session.userId)).map((b) => b.brnch);
+      const perms = new Map();
+      for (const b of branches) perms.set(b, await userPermissions(tx, session.userId, b));
+      return { branches, perms };
+    }, request.txOpts('authz'));
+    const none = new Set();
     request.authz = {
-      allowedBranches: async () => {
-        branches ??= (await app.db.read((tx) => userBranches(tx, session.userId))).map(
-          (b) => b.brnch,
-        );
-        return branches;
-      },
-      permissions: async (brnch) => {
-        if (!cache.has(brnch)) {
-          cache.set(brnch, await app.db.read((tx) => userPermissions(tx, session.userId, brnch)));
-        }
-        return cache.get(brnch);
-      },
+      allowedBranches: async () => loaded.branches,
+      permissions: async (brnch) => loaded.perms.get(brnch) ?? none,
       /** Branches (among allowed) where the user holds `key` (list endpoints with brnch=all). */
-      branchesWith: async (key) => {
-        const out = [];
-        for (const b of await request.authz.allowedBranches()) {
-          if ((await request.authz.permissions(b)).has(key)) out.push(b);
-        }
-        return out;
-      },
+      branchesWith: async (key) => loaded.branches.filter((b) => loaded.perms.get(b)?.has(key)),
     };
 
     // the session's own branch must still be allowed (role/branch removed since login)

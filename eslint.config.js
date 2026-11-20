@@ -73,6 +73,15 @@ export default [
       ...reactHooks.configs.recommended.rules,
       ...jsxA11y.flatConfigs.recommended.rules,
       'react/prop-types': 'off',
+      // shadcn Checkbox/Switch render Radix buttons; tell jsx-a11y they are form controls
+      'jsx-a11y/label-has-associated-control': [
+        'error',
+        { controlComponents: ['Checkbox', 'Switch'], depth: 3 },
+      ],
+      // informational: TanStack Table / RHF hooks are not memoisable by the React Compiler
+      'react-hooks/incompatible-library': 'off',
+      // shadcn/ui generates `import * as React` that the JSX runtime does not need
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^(_|React$)' }],
     },
   },
   {

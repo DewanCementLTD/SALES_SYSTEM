@@ -24,8 +24,8 @@ const schema = z.object({
     .refine((s) => Buffer.from(s, 'base64').length === 32, 'APP_ENC_KEY must be 32 bytes, base64'),
   API_PORT: z.coerce.number().int().default(4000),
   API_HOST: z.string().default('0.0.0.0'),
-  WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
-  PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
+  WEB_ORIGIN: z.string().url().default('http://localhost:3200'),
+  PUBLIC_BASE_URL: z.string().url().default('http://localhost:3200'),
   COOKIE_SECURE: bool.default('false'),
   STORAGE_DIR: z.string().default('./storage'),
 });
