@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+coverage
+pnpm-lock.yaml
+db/
+docs/reference/
+playwright-report
+test-results
+storage

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["NODE_ENV"],
+  "globalPassThroughEnv": [
+    "DATABASE_*",
+    "ORACLE_*",
+    "REDIS_URL",
+    "TEST_DB_*",
+    "JWT_SECRET",
+    "QR_SECRET",
+    "APP_ENC_KEY",
+    "WEB_ORIGIN",
+    "PUBLIC_BASE_URL",
+    "API_URL"
+  ],
+  "tasks": {
+    "build": { "dependsOn": ["^build"], "outputs": [".next/**", "!.next/cache/**", "dist/**"] },
+    "dev": { "cache": false, "persistent": true },
+    "test": { "outputs": [] },
+    "test:unit": { "outputs": [] }
+  }
+}
