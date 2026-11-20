@@ -92,7 +92,7 @@ export function SidebarNav({ onNavigate }) {
                 <ul className="mb-1 ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-3">
                   {g.items.map((item) => {
                     const isActive = active?.item.href === item.href;
-                    const planned = !BUILT_PHASES.has(item.phase);
+                    const planned = !BUILT_PHASES.has(item.phase) && !item.built;
                     return (
                       <li key={item.href}>
                         <Link

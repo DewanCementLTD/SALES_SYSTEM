@@ -4,6 +4,8 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // e2e builds into its own folder so it never clashes with a running `next dev` (.next)
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   // lint runs once at the repo root (pnpm lint, CI), not again inside next build
   eslint: { ignoreDuringBuilds: true },
   transpilePackages: ['@dcl/shared'],

@@ -156,13 +156,38 @@ export const NAV = [
         href: '/masters/products',
         perm: ['masters.view'],
         phase: 'P1',
+        built: true,
       },
-      { label: 'DO types', href: '/masters/do-types', perm: ['masters.view'], phase: 'P1' },
-      { label: 'Bags', href: '/masters/bags', perm: ['masters.view'], phase: 'P1' },
-      { label: 'Channels', href: '/masters/channels', perm: ['masters.view'], phase: 'P1' },
-      { label: 'Banks', href: '/masters/banks', perm: ['masters.view'], phase: 'P1' },
-      { label: 'Instruments', href: '/masters/instruments', perm: ['masters.view'], phase: 'P1' },
-      { label: 'Transporters', href: '/masters/transporters', perm: ['masters.view'], phase: 'P1' },
+      {
+        label: 'DO types',
+        href: '/masters/do-types',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
+      { label: 'Bags', href: '/masters/bags', perm: ['masters.view'], phase: 'P1', built: true },
+      {
+        label: 'Channels',
+        href: '/masters/channels',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
+      { label: 'Banks', href: '/masters/banks', perm: ['masters.view'], phase: 'P1', built: true },
+      {
+        label: 'Instruments',
+        href: '/masters/instruments',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
+      {
+        label: 'Transporters',
+        href: '/masters/transporters',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
       { label: 'Trade prices', href: '/masters/trade-prices', perm: ['pricing.view'], phase: 'P1' },
       {
         label: 'City rate sheets',
@@ -172,8 +197,20 @@ export const NAV = [
       },
       { label: 'Freight sheets', href: '/masters/freight', perm: ['pricing.view'], phase: 'P1' },
       { label: 'Tax rates', href: '/masters/tax-rates', perm: ['tax.view'], phase: 'P1' },
-      { label: 'Credit types', href: '/masters/credit-types', perm: ['masters.view'], phase: 'P1' },
-      { label: 'Note types', href: '/masters/note-types', perm: ['masters.view'], phase: 'P1' },
+      {
+        label: 'Credit types',
+        href: '/masters/credit-types',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
+      {
+        label: 'Note types',
+        href: '/masters/note-types',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
     ],
   },
   {
@@ -223,6 +260,7 @@ export const NAV = [
   },
 ];
 
+/** Items of a later phase that are already built carry `built: true`. */
 export const BUILT_PHASES = new Set(['P0']);
 
 export const PHASE_NAMES = {

@@ -14,4 +14,6 @@ export const qk = {
   settings: (level) => ['admin', 'settings', level],
   audit: (params) => ['audit', params],
   outbox: (params) => ['admin', 'outbox', params],
+  masters: (type, params) => ['masters', type, params],
+  lookups: (brnch, types) => ['lookups', brnch, types],
 };

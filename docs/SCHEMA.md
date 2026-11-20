@@ -12,6 +12,7 @@ Database: Oracle (target 19c; SQL must stay 11g-compatible). Schema owner on the
 | Legacy tables not in 01     | `db/migrations/001_LEGACY_TABLES_NOT_HOSTED.sql`                    | 9 tables for legacy business data that 01 had no home for (§2.2)                                                   |
 | Extra legacy load           | `db/02c_LOAD_LEGACY_EXTRA.sql`                                      | Loads the 001 tables, rescues rows found only in legacy backup copies, fills derivable columns; own reconciliation |
 | Geography                   | `db/migrations/002_GEO_HIERARCHY.sql` + `db/02d_LOAD_GEO.sql`       | One 4-level geography Zone → Territory → Area → City for both branches, LEGACY_MAP, customer placement (§2.3)      |
+| Master flags                | `db/migrations/003_MASTER_FLAGS.sql`                                | `ACTIVE`, `ROW_VER`, `UPDATED_BY/ON` on 16 simple masters; `CHANNEL_DESC.REPORT_GROUP` (§2.6)                      |
 | Reports for the business    | `db/reports/*.csv`                                                  | `FED_RATE_REVIEW.csv` (Finance), `KHI_CUSTOMERS_WITHOUT_GEO.csv` + `GEO_CODES_KARACHI.csv` (Sales)                 |
 | Later changes               | `db/migrations/NNN_*.sql`                                           | Every change after 05, recorded in `SCHEMA_VERSION`                                                                |
 | Column-level reference      | `docs/reference/LEGACY_TABLES.md`                                   | All 174 tables with columns, PK/UK/FK (generated)                                                                  |
@@ -124,6 +125,15 @@ Karachi `ZONE_DESC` (customer zone: KARACHI, HYDERABAD …) is not in the chain;
 The damaged SYS dictionary breaks `DBMS_OUTPUT` (`SET SERVEROUTPUT ON`), `DROP` and **`ALTER TABLE … MODIFY`** (ORA-00604). `ADD` column, `CREATE`, DML and anonymous PL/SQL work. 05 was adjusted to run here (no SERVEROUTPUT, ZZ_ADD_COL as a local procedure in each block, no DROP). Not applied on this server: `CUSTOMER_INFO.EMAIL` widening to 100 (stays 35) — run it on the production server.
 
 Legacy columns that the new app **also fills** for old reports: `FH_DELIVERY_CHALLAN.INVOICE_NO/INVOICE_DATE` (first invoice of the DC), `W_TARE`, `WT_GROSS`, `QTY_VERIFIED` (net tons), `VEHICLE_NO`, `TRANSP_CODE`, `TOKEN_NO`; `DELIVERY_ORDER.DISPATCHED` (rounded), `CANCEL_CODE`, `CANCEL_DATE`; `ORDER_CONFIRM.APPROVED`, `CANCEL_CODE`; `CASH_CHEQUE_RECEIPTS.CANCEL_STATS`, `RETURN_CD`, `RETURN_DATE`, `CLEAR_DATE`.
+
+### 2.6 Simple masters (003, P1-01)
+
+Masters are deactivated, never deleted: `ACTIVE CHAR(1) DEFAULT 'Y'`, `ROW_VER`, `UPDATED_BY/ON` added to GROUP_MST, PRODUCT_TYPE, PROD_BRAND, DELIVERY_ORDER_TYPE, BAG, BAGS_COLOR, CHANNEL_DESC, BANK_DESC, COMPANY_BANK, INSTRUMENT_TYPE, CATEGORY_TYPE, TRANSPORTER_DESC, MODE_OF_TRANSPORT, CREDIT_TYPE, CREDIT_NOTE_TYPE, REGION. Legacy flags (`BAG.STATS`, `PROD_BRAND.STATS`, `PRODUCT_DESC_T.STATUS`) are kept as they are.
+
+- `CHANNEL_DESC.REPORT_GROUP` (new): R7 group DEALER / DIRECT_INST / DEALER_INST / DISTRIBUTOR. Empty after migration — **Sales to fill per channel**. Legacy `GRP` (numbers, Hattar only) is unchanged.
+- Bank short code for R4 = existing `COMPANY_BANK.ABBR` (ABL, SONB …), no new column.
+- PRODUCT_DESC_T field names in the API (inferred from data, e.g. OPC period 57: 25,654.24 × 1.18 = 30,272; **to confirm with Finance**): `CODE` = MRP per ton tax-inclusive, `R_PRICE` = retail per ton excl. ST, `COMPANY_PRICE` = retail − FED, `P_SALES_TAX` = ST per ton, `CED` = FED per ton, `P_SALES_TAX_PER` = ST %, `AVG_RATE` shown as legacy average rate.
+- Keys used by the API: AREA has no PK (AREA_DOC unique per branch), BAG/PRODUCT_TYPE/TRANSPORTER_DESC/CREDIT_TYPE/COMPANY_BANK/MODE_OF_TRANSPORT/CREDIT_NOTE_TYPE/PROD_BRAND use their unique keys from 01/03.
 
 ## 3. New tables (by 05)
 

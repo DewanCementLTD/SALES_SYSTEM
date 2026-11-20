@@ -1,0 +1,68 @@
+// TASKS P1-01: masters are browsable (migrated data), created, edited and deactivated in the UI.
+// The sandbox API never commits.
+import { expect, test } from '@playwright/test';
+
+const USER = process.env.E2E_USER;
+const PASSWORD = process.env.E2E_PASSWORD;
+const SHOTS = process.env.SCREENSHOT_DIR ?? 'test-results/screens';
+
+async function login(page) {
+  await page.goto('/login');
+  await page.getByLabel('User ID').fill(USER);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Good/);
+}
+
+test('P1-01: channels — browse, create, edit, deactivate', async ({ page }) => {
+  await login(page);
+  await page.goto('/masters/channels');
+  await expect(page.getByRole('heading', { level: 1, name: 'Channels' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'DIRECT DEALER', exact: true })).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/10-masters-channels.png` });
+
+  await page.getByRole('button', { name: 'New channel' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Channel code').fill('z5');
+  await dialog.getByRole('button', { name: 'Create' }).click();
+  await expect(
+    dialog.getByText('Too small').or(dialog.getByText(/expected string|Invalid/)),
+  ).toBeVisible();
+  await dialog.getByLabel('Description').fill('E2E CHANNEL');
+  await dialog.getByRole('button', { name: 'Create' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('cell', { name: 'E2E CHANNEL', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit Z5' }).click();
+  await page.getByRole('dialog').getByLabel('Description').fill('E2E CHANNEL 2');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('cell', { name: 'E2E CHANNEL 2', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Deactivate Z5' }).click();
+  await page.getByRole('dialog').getByRole('textbox').fill('Created by the e2e test');
+  await page.getByRole('dialog').getByRole('button', { name: 'Deactivate' }).click();
+  await expect(page.getByRole('cell', { name: 'E2E CHANNEL 2', exact: true })).toBeHidden();
+});
+
+test('P1-01: products & periods are read-only and show the effective-period note', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto('/masters/products');
+  await expect(page.getByRole('tab', { name: 'Products & periods' })).toBeVisible();
+  await expect(page.getByText('BR-TAX-10').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /New product period/ })).toHaveCount(0);
+  await page.getByLabel('Search Products & periods').fill('OPC');
+  await page.getByLabel('Search Products & periods').press('Enter');
+  await expect(page.getByRole('cell', { name: 'OPC', exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/11-masters-products.png` });
+
+  await page.getByRole('tab', { name: 'Product types' }).click();
+  await expect(page.getByRole('cell', { name: 'Local Bulk', exact: true })).toBeVisible();
+});
+
+test('unbuilt masters still show the planned screen', async ({ page }) => {
+  await login(page);
+  await page.goto('/masters/trade-prices');
+  await expect(page.getByText(/Planned for P1/)).toBeVisible();
+});

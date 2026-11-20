@@ -72,16 +72,18 @@ REST/JSON API served by `apps/api` (Fastify). Base path **`/api/v1`**. The live 
 
 ## 4. Masters & pricing
 
-Generic pattern for simple masters (`zones`, `territories`, `areas`, `products`, `product-periods`, `do-types`, `bags`, `bag-colours`, `channels`, `banks`, `company-banks`, `instruments`, `categories`, `transporters`, `transport-modes`, `credit-types`, `note-types`, `regions`):
+Generic pattern for simple masters (P1-01): `product-groups`, `product-types`, `product-periods` (read-only), `brands`, `do-types`, `bags`, `bag-colours`, `channels`, `categories`, `regions`, `credit-types`, `banks`, `company-banks`, `instruments`, `transporters`, `transport-modes`, `note-types`. Fields per type (names, kinds, required, max length) are defined once in `packages/shared/src/masters.js`; the create/update body is validated with the same Zod schema the web form uses. Geography (zones, territories, areas, cities) has its own endpoints (P1-02, `GEO_HIERARCHY`).
 
-| Method | Path                                                     | Permission                         |
-| ------ | -------------------------------------------------------- | ---------------------------------- |
-| GET    | `/masters/{type}?brnch=&q=&active=`                      | `masters.view`                     |
-| GET    | `/masters/{type}/{brnch}/{key}`                          | `masters.view`                     |
-| POST   | `/masters/{type}`                                        | `masters.create`                   |
-| PUT    | `/masters/{type}/{brnch}/{key}`                          | `masters.update` (If-Match)        |
-| POST   | `/masters/{type}/{brnch}/{key}/deactivate` · `/activate` | `masters.update`                   |
-| GET    | `/lookups?types=zones,channels,…`                        | auth (cached 5 min, branch-scoped) |
+| Method | Path                                                                                                                            | Permission                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| GET    | `/masters/{type}?brnch=&q=&active=&productCode=&page=&pageSize=&sort=`                                                          | `masters.view`                                 |
+| GET    | `/masters/{type}/{brnch}/{key}`                                                                                                 | `masters.view`                                 |
+| POST   | `/masters/{type}` body `{ brnch?, …key, …fields }` (auto-numbered keys may be empty)                                            | `masters.create`                               |
+| PUT    | `/masters/{type}/{brnch}/{key}`                                                                                                 | `masters.update` (If-Match)                    |
+| POST   | `/masters/{type}/{brnch}/{key}/deactivate` · `/activate` body `{ reason? }`                                                     | `masters.update` (If-Match)                    |
+| GET    | `/lookups?types=channels,banks,…&brnch=` → `{ type: [{ value, label, active }] }`; types = single-key masters + `product-codes` | auth (cached 5 min per process, branch-scoped) |
+
+Composite keys are joined with `~` in URLs (`/masters/product-periods/1/OPC~57`). `product-periods` (PRODUCT_DESC_T) is read-only here: new periods carry tax rates and are entered with P1-05 (approval `RATE_CHANGE`); a write returns `409 invalid_state`.
 
 Pricing:
 

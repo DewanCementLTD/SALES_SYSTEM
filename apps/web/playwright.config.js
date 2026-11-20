@@ -44,11 +44,16 @@ export default defineConfig({
     },
     {
       // own ports so e2e never talks to a running dev server (3000/3100 are used by other apps here)
-      command: `npx next start --port ${WEB_PORT}`,
+      // builds into .next-e2e (a running `next dev` owns .next)
+      command: `npx next build && npx next start --port ${WEB_PORT}`,
       url: `http://localhost:${WEB_PORT}/login`,
       reuseExistingServer: false,
-      timeout: 120_000,
-      env: { API_URL: `http://127.0.0.1:${API_PORT}`, NODE_ENV: 'production' },
+      timeout: 400_000,
+      env: {
+        API_URL: `http://127.0.0.1:${API_PORT}`,
+        NODE_ENV: 'production',
+        NEXT_DIST_DIR: '.next-e2e',
+      },
     },
   ],
 });
