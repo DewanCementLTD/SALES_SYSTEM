@@ -173,6 +173,7 @@ export const DOC_TYPES = Object.freeze([
   'DOA',
   'INC',
   'CLM', // credit limit document (CREDIT_LIMITS_F.SERNO, P1-04)
+  'RSH', // city rate sheet (AREA_RATES_M.SERNO, P1-07)
 ]);
 
 /** Approval document types seeded by default (BR-APR-04). */

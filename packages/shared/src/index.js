@@ -13,3 +13,4 @@ export * from './customers.js';
 export * from './credit.js';
 export * from './tax-rates.js';
 export * from './pricing.js';
+export * from './rate-sheets.js';
