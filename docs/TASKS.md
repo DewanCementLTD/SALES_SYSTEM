@@ -40,7 +40,7 @@ Legend: **Deps** = tasks that must be done first · **Rules** = BUSINESS_RULES I
 ## P1 — Masters, customers, pricing
 
 - [x] **P1-01 Generic master module** — list/detail/create/update/deactivate for all simple masters (API §4) incl. product periods, DO types, bags, channels (with `report_group`), banks (`short_code`), instruments per branch, transporters, credit/note types; lookups endpoint. Deps: Gate P0. ✔ 20 Nov 2026 — 17 masters from one registry (`packages/shared/src/masters.js`), migration 003; product periods view-only (new periods with P1-05); short code = COMPANY_BANK.ABBR; geography moved to P1-02
-- [ ] **P1-02 Geography** — Zone → Territory → Area for both branches; Karachi legacy MASTER_AREA/DISTRICT/CITY read-only + mapping to new shape via LEGACY_MAP (import tool + review screen). Rules: BR-CUS-03.
+- [x] **P1-02 Geography** — Zone → Territory → Area for both branches; Karachi legacy MASTER_AREA/DISTRICT/CITY read-only + mapping to new shape via LEGACY_MAP (import tool + review screen). Rules: BR-CUS-03. ✔ 20 Nov 2026 — import tool = `db/02d_LOAD_GEO.sql` (already run, 1,122 nodes / 1,100 legacy codes); Masters → Geography: four-level browser, create/rename/deactivate (cascades), legacy-code review, customers-without-geography count (KHI 3,344)
 - [ ] **P1-03 Customers** — all tabs, code generator, approval (maker-checker), change requests with diff, blocks, security deposits, areas, bank accounts, contacts/notification prefs, 360 panel. Rules: BR-CUS-*. API §5.
       AC: PRD 4.2 AC.
 - [ ] **P1-04 Credit limits** — credit types A–J, Credit Limit document → approval → CREDIT_LIMITS update. Rules: BR-CUS-07.

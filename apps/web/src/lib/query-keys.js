@@ -16,4 +16,7 @@ export const qk = {
   outbox: (params) => ['admin', 'outbox', params],
   masters: (type, params) => ['masters', type, params],
   lookups: (brnch, types) => ['lookups', brnch, types],
+  geoNodes: (params) => ['geo', 'nodes', params],
+  geoLegacy: (params) => ['geo', 'legacy', params],
+  geoSummary: (brnch) => ['geo', 'summary', brnch],
 };

@@ -150,7 +150,13 @@ export const NAV = [
     label: 'Masters',
     icon: Warehouse,
     items: [
-      { label: 'Geography', href: '/masters/geography', perm: ['masters.view'], phase: 'P1' },
+      {
+        label: 'Geography',
+        href: '/masters/geography',
+        perm: ['masters.view'],
+        phase: 'P1',
+        built: true,
+      },
       {
         label: 'Products & periods',
         href: '/masters/products',

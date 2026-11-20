@@ -85,6 +85,18 @@ Generic pattern for simple masters (P1-01): `product-groups`, `product-types`, `
 
 Composite keys are joined with `~` in URLs (`/masters/product-periods/1/OPC~57`). `product-periods` (PRODUCT_DESC_T) is read-only here: new periods carry tax rates and are entered with P1-05 (approval `RATE_CHANGE`); a write returns `409 invalid_state`.
 
+Geography (P1-02, `GEO_HIERARCHY`, SCHEMA §2.3). `geoCode` = `Z<zone>-T<territory>-A<area>-C<city>`, unique per branch:
+
+| Method | Path                                                                  | Permission                  | Notes                                                                                                    |
+| ------ | --------------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| GET    | `/geo/nodes?brnch=&parentCode=&level=&q=&active=&page=&pageSize=`     | `masters.view`              | Children of `parentCode`, or one level, or a search; each node has `path`, `childCount`, `customerCount` |
+| GET    | `/geo/nodes/{brnch}/{geoCode}`                                        | `masters.view`              | ETag                                                                                                     |
+| POST   | `/geo/nodes` `{ brnch?, parentCode?, code, name }`                    | `masters.create`            | No parent = zone; parent must be active; code fixed afterwards (BR-CUS-03)                               |
+| PUT    | `/geo/nodes/{brnch}/{geoCode}` `{ name }`                             | `masters.update` (If-Match) | Name copied to every node below                                                                          |
+| POST   | `/geo/nodes/{brnch}/{geoCode}/deactivate` · `/activate` `{ reason? }` | `masters.update` (If-Match) | Deactivate cascades down; activate needs an active parent                                                |
+| GET    | `/geo/legacy-map?brnch=&entity=&q=`                                   | `masters.view`              | LEGACY_MAP review: legacy code → node                                                                    |
+| GET    | `/geo/summary?brnch=`                                                 | `masters.view`              | Nodes per level, customers without geography, legacy entities                                            |
+
 Pricing:
 
 | Method   | Path                                                                   | Permission                 | Notes                                                                 |

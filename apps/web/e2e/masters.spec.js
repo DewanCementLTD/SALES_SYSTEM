@@ -66,3 +66,27 @@ test('unbuilt masters still show the planned screen', async ({ page }) => {
   await page.goto('/masters/trade-prices');
   await expect(page.getByText(/Planned for P1/)).toBeVisible();
 });
+
+test('P1-02: geography — browse the hierarchy, add a zone, review legacy codes', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto('/masters/geography');
+  await expect(page.getByRole('heading', { level: 1, name: 'Geography' })).toBeVisible();
+  await expect(page.getByText('Customers without geography')).toBeVisible();
+  const zones = page.getByRole('list', { name: 'Zones' });
+  await zones.getByRole('button').first().click();
+  await expect(
+    page.getByRole('list', { name: 'Territories' }).getByRole('button').first(),
+  ).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/12-masters-geography.png` });
+
+  await page.getByRole('button', { name: 'New zone' }).click();
+  await page.getByRole('dialog').getByLabel('Code').fill('e2');
+  await page.getByRole('dialog').getByLabel('Name').fill('E2E Zone');
+  await page.getByRole('dialog').getByRole('button', { name: 'Create' }).click();
+  await expect(zones.getByRole('button', { name: /E2E Zone/ })).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Legacy codes' }).click();
+  await expect(page.getByRole('cell', { name: 'CITY', exact: true }).first()).toBeVisible();
+});

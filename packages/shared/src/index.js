@@ -8,3 +8,4 @@ export * from './numbering-format.js';
 export * from './validators.js';
 export * from './roles.js';
 export * from './masters.js';
+export * from './geo.js';
