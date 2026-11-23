@@ -116,3 +116,43 @@ describe('Delivery Order print (BR-DO-03, BR-QR-01)', () => {
     expect(out.html).toContain('Lift within 48 hours.');
   });
 });
+
+describe('Permit print (BR-PMT-04)', () => {
+  it('area grid, no expiry unless set, signed QR', async () => {
+    const out = await renderTemplate(
+      'permit',
+      {
+        brnch: 2,
+        permit: {
+          permitNo: '20272301.2',
+          permitDate: '2026-11-23',
+          validFrom: '2026-11-23',
+          validTo: null,
+          customerCode: '1502-22-080',
+          productCode: 'OPS',
+          qtyTon: '40.000',
+          status: 'ISSUED',
+          areas: [
+            {
+              areaDoc: '2190',
+              areaName: 'Rawalpindi',
+              qtyTon: '40.000',
+              rate: '25070.00',
+              amount: '1002800.00',
+              status: 'OPEN',
+            },
+          ],
+        },
+        terms: [],
+      },
+      { runAt, qrSecret },
+    );
+    expect(out.html).toContain('Rawalpindi (2190)');
+    expect(out.html).not.toContain('valid to');
+    expect(out.html).toContain('Terms text not set up');
+    await expect(verifyQr(out.qrPayload, qrSecret)).resolves.toMatchObject({
+      ok: true,
+      doc: { docType: 'PMT', docNo: '20272301.2' },
+    });
+  });
+});

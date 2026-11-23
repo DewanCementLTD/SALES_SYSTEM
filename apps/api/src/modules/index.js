@@ -12,6 +12,7 @@ import masterRoutes from './masters/routes.js';
 import notificationRoutes from './notifications/routes.js';
 import ocRoutes from './oc/routes.js';
 import outboxRoutes from './outbox/routes.js';
+import permitRoutes from './permits/routes.js';
 import pricingRoutes from './pricing/routes.js';
 import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
@@ -40,4 +41,5 @@ export async function registerModules(app) {
   await app.register(brvRoutes, { prefix: '/api/v1' });
   await app.register(ocRoutes, { prefix: '/api/v1' });
   await app.register(doRoutes, { prefix: '/api/v1' });
+  await app.register(permitRoutes, { prefix: '/api/v1' });
 }

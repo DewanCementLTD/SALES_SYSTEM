@@ -6,6 +6,7 @@ import { html, raw } from './html.js';
 import brvReceipt from './brv-receipt.js';
 import contractReview from './contract-review.js';
 import deliveryOrder from './delivery-order.js';
+import permit from './permit.js';
 import { footerTemplate, page } from './letterhead.js';
 
 export { html, raw, escapeHtml } from './html.js';
@@ -72,6 +73,7 @@ export const TEMPLATES = {
   'contract-review': contractReview,
   'brv-receipt': brvReceipt,
   'delivery-order': deliveryOrder,
+  permit,
 };
 
 /** Render a registered template to HTML. */

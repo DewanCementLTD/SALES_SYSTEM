@@ -87,9 +87,27 @@ export const NAV = [
     label: 'Permits',
     icon: ClipboardCheck,
     items: [
-      { label: 'Permits', href: '/permits', perm: ['permit.view'], phase: 'P2' },
-      { label: 'Adjust quantity', href: '/permits/adjust', perm: ['permit.adjust'], phase: 'P2' },
-      { label: 'CFO queue', href: '/permits/cfo', perm: ['permit.cfo_approve'], phase: 'P2' },
+      {
+        label: 'Permits',
+        href: '/permits',
+        perm: ['permit.view'],
+        phase: 'P2',
+        built: true,
+      },
+      {
+        label: 'Adjust quantity',
+        href: '/permits/adjust',
+        perm: ['permit.adjust'],
+        phase: 'P2',
+        built: true,
+      },
+      {
+        label: 'CFO queue',
+        href: '/permits/cfo',
+        perm: ['permit.cfo_approve'],
+        phase: 'P2',
+        built: true,
+      },
     ],
   },
   {
