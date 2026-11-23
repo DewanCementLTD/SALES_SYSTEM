@@ -1,10 +1,11 @@
 // /api/v1/plant/* (API_SPEC §11, TASKS P3). Device-callable routes are marked `device: true`
 // (PERMISSIONS P-6: only their own branch).
-import { P, zGateIn, zReason } from '@dcl/shared';
+import { P, verifyQr, zGateIn, zReason } from '@dcl/shared';
 import { z } from 'zod';
 import { Errors } from '../../lib/errors.js';
 import { SettingsReader } from '../settings/service.js';
 import { receiveReading } from './readings.js';
+import * as exit from './exit.js';
 import * as gate from './gate.js';
 import * as invoice from './invoice.js';
 import * as scan from './scan.js';
@@ -98,6 +99,8 @@ const zGatePass = z.object({
   exitBy: zN,
   clientId: zN,
   rowVer: z.number(),
+  weightOvrReqId: zNum.optional(),
+  exitOvrReqId: zNum.optional(),
 });
 const zGatePassFull = zGatePass.extend({
   lines: z.array(
@@ -432,5 +435,93 @@ export default async function plantRoutes(app) {
       gatePass: await gate.getGatePass(tx, id),
     }),
     z.object({ invoices: z.array(zInvoiceBrief), gatePass: zGatePassFull }),
+  );
+
+  // ---- exit (P3-08) ----
+  const zChecklist = z.object({
+    ok: z.boolean(),
+    missing: z.array(z.string()),
+    fbrPendingOnly: z.boolean(),
+  });
+  const withChecklist = async (tx, gpId) => {
+    const gp = await gate.getGatePass(tx, gpId);
+    const c = await exit.exitChecklist(tx, gp);
+    return {
+      gatePass: gp,
+      checklist: { ok: c.ok, missing: c.missing, fbrPendingOnly: c.fbrPendingOnly },
+      invoices: c.invoices,
+    };
+  };
+  const zExitView = z.object({
+    gatePass: zGatePassFull,
+    checklist: zChecklist,
+    invoices: z.array(zInvoiceRow),
+  });
+
+  app.post(
+    '/plant/exit-scan',
+    {
+      config: { permission: P.gate.exit },
+      schema: {
+        tags,
+        summary:
+          'Scan the gate-pass QR on the DC (BR-EXIT-01) → gate pass + exit checklist (BR-EXIT-02)',
+        body: z.object({ qr: z.string().min(5).max(300) }),
+        response: { 200: zExitView },
+      },
+    },
+    async (request) => {
+      const v = await verifyQr(request.body.qr, app.config.QR_SECRET);
+      if (!v.ok) throw Errors.rule('BR-QR-02', 'Not a valid gate-pass QR', { reason: v.reason });
+      if (v.doc.docType !== 'GP')
+        throw Errors.validation('Scan the gate-pass QR printed on the DC');
+      if (v.doc.brnch !== request.session.brnch)
+        throw Errors.rule('BR-QR-02', 'The gate pass belongs to the other plant', {
+          reason: 'WRONG_BRANCH',
+        });
+      return app.db.read(
+        (tx) => withChecklist(tx, Number(v.doc.docNo)),
+        request.txOpts('plant.exit-scan'),
+      );
+    },
+  );
+
+  app.get(
+    '/plant/gate-passes/:gpId/exit-check',
+    {
+      config: { permission: P.gate.view },
+      schema: {
+        tags,
+        summary: 'Exit checklist (BR-EXIT-02): what still blocks the truck',
+        params: zGpParams,
+        response: { 200: zExitView },
+      },
+    },
+    async (request) => {
+      const res = await app.db.read(
+        (tx) => withChecklist(tx, request.params.gpId),
+        request.txOpts('plant.exit-check'),
+      );
+      if (res.gatePass.brnch !== request.session.brnch)
+        throw Errors.notFound(`Gate pass ${request.params.gpId}`);
+      return res;
+    },
+  );
+
+  plantCommand(
+    'exit',
+    P.gate.exit,
+    z.object({}),
+    'Let the truck out (BR-EXIT-02/03): 422 lists what is missing; closes the gate pass, tells the dealer',
+    (tx, a, id) => exit.exitGate(tx, a, id),
+    zGatePassFull,
+  );
+  plantCommand(
+    'request-exit-override',
+    P.gate.exit_override,
+    z.object({ reason: zReason }),
+    'Exit while FBR is pending (only when ALLOW_EXIT_WITHOUT_FBR = Y) → approval EXIT_WITHOUT_FBR',
+    (tx, a, id, b) => exit.requestExitOverride(tx, a, id, b.reason),
+    z.object({ gatePass: zGatePassFull, requestId: z.number() }),
   );
 }

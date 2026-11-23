@@ -6,7 +6,12 @@
 import { enqueue } from '../outbox/service.js';
 
 /** Dealer events and their template codes. */
-export const DEALER_EVENTS = Object.freeze(['BRV_VERIFIED', 'DO_ISSUED', 'PERMIT_ISSUED']);
+export const DEALER_EVENTS = Object.freeze([
+  'BRV_VERIFIED',
+  'DO_ISSUED',
+  'PERMIT_ISSUED',
+  'TRUCK_EXITED',
+]);
 const CHANNEL_OF = { SMS: 'SMS', WA: 'WHATSAPP', EMAIL: 'EMAIL' };
 
 /** `Dear {CUSTOMER_NAME}` + { CUSTOMER_NAME: 'X' } → `Dear X` (unknown placeholders stay visible). */

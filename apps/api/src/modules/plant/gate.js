@@ -29,7 +29,8 @@ const GP_COLS = `g.GP_ID, g.BRNCH, g.STATUS, g.ROUTE, g.CUSTOMER_CODE, c.CUSTOME
   g.DEST_AREA, g.PACKING_TYPE, g.VEHICLE_NO, g.DRIVER_CNIC, g.DRIVER_NAME, g.DRIVER_MOBILE,
   g.TRANSP_CODE, t.TRANSP_NAME, g.BILTY_NO, g.DC_YEAR, g.DC_NO, g.PLANNED_BAGS, g.PLANNED_KG,
   g.TARE_KG, g.TARE_ON, g.GROSS_KG, g.GROSS_ON, g.NET_KG, g.VARIANCE_KG, g.VARIANCE_PCT,
-  g.VARIANCE_STATUS, g.GATE_IN_ON, g.GATE_IN_BY, g.EXIT_ON, g.EXIT_BY, g.CLIENT_ID, g.ROW_VER`;
+  g.VARIANCE_STATUS, g.GATE_IN_ON, g.GATE_IN_BY, g.EXIT_ON, g.EXIT_BY, g.CLIENT_ID, g.ROW_VER,
+  g.WEIGHT_OVR_REQ_ID, g.EXIT_OVR_REQ_ID`;
 const GP_FROM = `GATE_PASS g
   LEFT JOIN CUSTOMER_INFO c ON c.BRNCH = g.BRNCH AND c.CUSTOMER_CODE = g.CUSTOMER_CODE
   LEFT JOIN TRANSPORTER_DESC t ON t.BRNCH = g.BRNCH AND t.TRANSP_CODE = g.TRANSP_CODE`;
@@ -73,6 +74,8 @@ function mapGatePass(r) {
     exitOn: r.EXIT_ON ?? null,
     exitBy: r.EXIT_BY ?? null,
     clientId: r.CLIENT_ID ?? null,
+    weightOvrReqId: r.WEIGHT_OVR_REQ_ID === null ? null : Number(r.WEIGHT_OVR_REQ_ID),
+    exitOvrReqId: r.EXIT_OVR_REQ_ID === null ? null : Number(r.EXIT_OVR_REQ_ID),
     rowVer: Number(r.ROW_VER),
   };
 }

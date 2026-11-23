@@ -45,3 +45,15 @@ test('P3-05: weighing screen shows the agent state and the trucks to weigh', asy
   await expect(page.getByLabel('Live weight')).toContainText('— — —');
   await page.screenshot({ path: `${SHOTS}/34-weighing.png` });
 });
+
+test('P3-08: exit screen refuses a QR that is not a gate pass', async ({ page }) => {
+  await login(page);
+  await page.goto('/plant/exit');
+  await expect(page.getByRole('heading', { level: 1, name: 'Exit' })).toBeVisible();
+  await page.getByLabel('Gate-pass QR').fill('NOT-A-GATE-PASS');
+  await page.getByRole('button', { name: 'Check the gate pass' }).click();
+  await expect(
+    page.getByRole('alert').filter({ hasText: /gate-pass QR|not allowed|need/i }),
+  ).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/35-exit.png` });
+});

@@ -166,7 +166,7 @@ export const NAV = [
         phase: 'P3',
         built: true,
       },
-      { label: 'Exit', href: '/plant/exit', perm: ['gate.exit'], phase: 'P3' },
+      { label: 'Exit', href: '/plant/exit', perm: ['gate.exit'], phase: 'P3', built: true },
       { label: 'Offline sync', href: '/plant/sync', perm: ['sync.resolve'], phase: 'P3' },
     ],
   },
