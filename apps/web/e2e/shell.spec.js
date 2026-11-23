@@ -42,6 +42,7 @@ test('P0-16: admin screens load with data from the API', async ({ page }) => {
     ['/admin/settings', 'Settings', '06-admin-settings'],
     ['/approvals/rules', 'Approval rules', '07-approval-rules'],
     ['/admin/audit', 'Audit log', '08-audit-log'],
+    ['/admin/devices', 'Devices', '31-admin-devices'],
     ['/approvals', 'My approvals', '09-approvals-inbox'],
   ];
   for (const [path, title, shot] of screens) {
@@ -88,7 +89,7 @@ test('planned screens show their phase; command palette navigates', async ({ pag
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/orders\/oc$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Order confirmations' })).toBeVisible();
-  await page.goto('/admin/devices');
+  await page.goto('/admin/gl-map');
   await expect(page.getByText('Planned for P3')).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/03-planned-screen.png` });
 });

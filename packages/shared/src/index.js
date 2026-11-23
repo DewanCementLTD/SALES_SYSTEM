@@ -21,3 +21,4 @@ export * from './oc.js';
 export * from './brv.js';
 export * from './permit.js';
 export * from './do.js';
+export * from './device.js';

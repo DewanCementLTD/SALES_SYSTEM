@@ -34,7 +34,7 @@ Legend: **Deps** = tasks that must be done first · **Rules** = BUSINESS_RULES I
 - [x] **P0-14 Web shell** — Next.js 15 JS, Tailwind v4, shadcn/ui (JSX), layout with sidebar (PRD §3), branch switcher, fiscal year, command palette (cmdk), notifications bell, approvals badge, auth pages, permission-aware navigation, error boundary, toasts, PKR/date formatters, API client with CSRF + refresh handling, TanStack Query provider. Deps: P0-08. ✔ 20 Nov 2026 — e2e login → switch branch → logout passes
       AC: Playwright: login → switch branch → logout.
 - [x] **P0-15 PDF service** — `packages/pdf-templates` (letterhead, run time, "system generated"), worker renders with Playwright Chromium; QR (`qrcode`) and barcode (`bwip-js`) helpers; storage path + secure link. Deps: P0-13. ✔ 20 Nov 2026 — templates as escaped HTML functions (no React SSR in the worker); download endpoint with permission + audit
-- [~] **P0-16 Admin screens** — users (branches + roles per branch), roles matrix editor, settings, devices, print texts, message templates, GL map, approval rules, audit viewer. API §3. Deps: P0-09…P0-12, P0-14. ◐ 20 Nov 2026 — done: users, roles matrix, settings, approval rules, audit viewer, outbox, approvals inbox. Pending with their modules: devices (P3-01), print texts (P1), message templates (P2-09), GL map (P3)
+- [~] **P0-16 Admin screens** — users (branches + roles per branch), roles matrix editor, settings, devices, print texts, message templates, GL map, approval rules, audit viewer. API §3. Deps: P0-09…P0-12, P0-14. ◐ 20 Nov 2026 — done: users, roles matrix, settings, approval rules, audit viewer, outbox, approvals inbox. Devices done with P3-01, print texts and message templates with P2-09; GL map pending (P3)
 - **Gate P0**: P0-01…P0-14 done. ✔ 20 Nov 2026 — awaiting review.
 
 ## P1 — Masters, customers, pricing
@@ -68,7 +68,7 @@ Legend: **Deps** = tasks that must be done first · **Rules** = BUSINESS_RULES I
 
 ## P3 — Plant dispatch (end to end)
 
-- [ ] **P3-01 Device registry & auth** — APP_DEVICE admin, device token endpoint, HMAC verification helper. Deps: Gate P0.
+- [x] **P3-01 Device registry & auth** — APP_DEVICE admin, device token endpoint, HMAC verification helper. Deps: Gate P0. ✔ 24 Nov 2026 — `packages/shared/src/device.js` (HMAC signing, token request, reading text), `apps/api/src/lib/crypto.js` (AES-256-GCM), `modules/devices`, device tokens in the auth plugin (`config.device`, own branch, active only), Admin › Devices
 - [ ] **P3-02 Weighbridge agent** — Node service: serialport/TCP reader, parser profiles (configurable regex; ship profiles for common indicators + simulator), stable detection (BR-WGT-01), local WS server, signed upload, SQLite buffer, Windows service installer, logs. Deps: P3-01.
       AC: simulator end-to-end; cable unplug detection < 3 s; replayed readings deduped by (device, readingId).
 - [ ] **P3-03 Scan & offline cache** — `/plant/scan`, `/plant/offline-cache` (ETag), QR verification server/client. Rules: BR-QR-*, BR-OFF-02.

@@ -5,6 +5,7 @@ import brvRoutes from './brv/routes.js';
 import cancellationRoutes from './cancellations/routes.js';
 import authRoutes from './auth/routes.js';
 import customerRoutes from './customers/routes.js';
+import deviceRoutes from './devices/routes.js';
 import doRoutes from './do/routes.js';
 import fileRoutes from './files/routes.js';
 import geoRoutes from './geo/routes.js';
@@ -46,4 +47,5 @@ export async function registerModules(app) {
   await app.register(permitRoutes, { prefix: '/api/v1' });
   await app.register(cancellationRoutes, { prefix: '/api/v1' });
   await app.register(textRoutes, { prefix: '/api/v1' });
+  await app.register(deviceRoutes, { prefix: '/api/v1' });
 }
