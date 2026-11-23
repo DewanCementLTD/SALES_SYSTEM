@@ -1,10 +1,11 @@
 // /api/v1/plant/* (API_SPEC §11, TASKS P3). Device-callable routes are marked `device: true`
 // (PERMISSIONS P-6: only their own branch).
-import { P, zReason } from '@dcl/shared';
+import { P, zGateIn, zReason } from '@dcl/shared';
 import { z } from 'zod';
 import { Errors } from '../../lib/errors.js';
 import { SettingsReader } from '../settings/service.js';
 import { receiveReading } from './readings.js';
+import * as gate from './gate.js';
 import * as scan from './scan.js';
 
 const zReading = z.object({
@@ -59,6 +60,59 @@ const zEntry = zCard
     holdReason: true,
   })
   .extend({ sig: z.string(), areas: z.array(zArea) });
+
+const zN = z.string().nullable();
+const zNum = z.number().nullable();
+const zGatePass = z.object({
+  gpId: z.number(),
+  brnch: z.number(),
+  status: z.string(),
+  route: z.enum(['DO', 'PMT']),
+  customerCode: zN,
+  customerName: zN,
+  dcType: zN,
+  destArea: zN,
+  packingType: z.string(),
+  vehicleNo: z.string(),
+  driver: z.object({ cnic: zN, name: zN, mobile: zN }),
+  transpCode: zN,
+  transpName: zN,
+  biltyNo: zN,
+  dcYear: zNum,
+  dcNo: zN,
+  plannedBags: zNum,
+  plannedKg: zNum,
+  tareKg: zNum,
+  tareOn: z.date().nullable(),
+  grossKg: zNum,
+  grossOn: z.date().nullable(),
+  netKg: zNum,
+  varianceKg: zNum,
+  variancePct: zN,
+  varianceStatus: zN,
+  gateInOn: z.date(),
+  gateInBy: z.string(),
+  exitOn: z.date().nullable(),
+  exitBy: zN,
+  clientId: zN,
+  rowVer: z.number(),
+});
+const zGatePassFull = zGatePass.extend({
+  lines: z.array(
+    z.object({
+      srNo: z.number(),
+      doType: z.string(),
+      doNo: z.string(),
+      ocNo: zN,
+      plannedBags: zNum,
+      plannedTon: z.string(),
+      allocNetKg: zNum,
+      status: z.string(),
+      invoiceId: zNum,
+    }),
+  ),
+  replay: z.boolean().optional(),
+});
 
 const zReceived = z.object({ readingId: z.string(), receivedOn: z.date(), duplicate: z.boolean() });
 
@@ -182,5 +236,72 @@ export default async function plantRoutes(app) {
       if (request.headers['if-none-match'] === tag) return reply.status(304).send();
       return res;
     },
+  );
+
+  const actor = (request) => ({
+    usrid: request.session.usrid,
+    now: app.clock.now(),
+    audit: request.ctx(),
+  });
+
+  app.post(
+    '/plant/gate-passes',
+    {
+      config: { permission: P.gate.in, idempotency: 'required' },
+      schema: {
+        tags,
+        summary:
+          'Gate-in (BR-GATE-01…06): gate pass + DC issued with planned quantities; DO route (permit route pending)',
+        body: zGateIn,
+        response: { 200: zGatePassFull, 201: zGatePassFull },
+      },
+    },
+    async (request, reply) => {
+      const res = await app.db.withTx(
+        (tx) => gate.gateIn(tx, actor(request), request.session.brnch, request.body),
+        request.txOpts('plant.gate-in'),
+      );
+      return reply.status(res.replay ? 200 : 201).send(res);
+    },
+  );
+
+  app.get(
+    '/plant/gate-passes/:gpId',
+    {
+      config: { permission: P.gate.view },
+      schema: {
+        tags,
+        summary: 'Gate pass with its DC lines, weights and variance',
+        params: z.object({ gpId: z.coerce.number().int().positive() }),
+        response: { 200: zGatePassFull },
+      },
+    },
+    async (request) => {
+      const gp = await app.db.read(
+        (tx) => gate.getGatePass(tx, request.params.gpId),
+        request.txOpts('plant.gate-pass'),
+      );
+      if (!(await request.authz.permissions(gp.brnch)).has(P.gate.view))
+        throw Errors.notFound(`Gate pass ${gp.gpId}`); // other branch: as if it did not exist
+      return gp;
+    },
+  );
+
+  app.get(
+    '/plant/board',
+    {
+      config: { permission: P.gate.view },
+      schema: {
+        tags,
+        summary: 'Open gate passes of my branch with minutes since gate-in',
+        response: { 200: z.object({ items: z.array(zGatePass.extend({ waitMin: z.number() })) }) },
+      },
+    },
+    async (request) => ({
+      items: await app.db.read(
+        (tx) => gate.board(tx, request.session.brnch, app.clock.now()),
+        request.txOpts('plant.board'),
+      ),
+    }),
   );
 }

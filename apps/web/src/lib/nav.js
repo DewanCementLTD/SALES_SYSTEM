@@ -150,8 +150,8 @@ export const NAV = [
     label: 'Plant',
     icon: Factory,
     items: [
-      { label: 'Plant queue', href: '/plant/queue', perm: ['gate.view'], phase: 'P3' },
-      { label: 'Gate-in', href: '/plant/gate-in', perm: ['gate.in'], phase: 'P3' },
+      { label: 'Plant queue', href: '/plant/queue', perm: ['gate.view'], phase: 'P3', built: true },
+      { label: 'Gate-in', href: '/plant/gate-in', perm: ['gate.in'], phase: 'P3', built: true },
       { label: 'Weighing', href: '/plant/weighing', perm: ['weigh.view'], phase: 'P3' },
       { label: 'Delivery challans', href: '/plant/dc', perm: ['dc.view'], phase: 'P3' },
       { label: 'Exit', href: '/plant/exit', perm: ['gate.exit'], phase: 'P3' },
