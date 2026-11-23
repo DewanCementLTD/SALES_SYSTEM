@@ -39,3 +39,12 @@ test('P2-08: cancellation advices list orders and receipts', async ({ page }) =>
   await page.getByRole('tab', { name: 'Receipts (BRV)' }).click();
   await expect(page).toHaveURL(/kind=receipt/);
 });
+
+test('P2-09: admin message templates and print texts list the seeded rows', async ({ page }) => {
+  await login(page);
+  await page.goto('/admin/templates');
+  await expect(page.getByRole('heading', { level: 1, name: 'Message templates' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'DO_ISSUED' }).first()).toBeVisible();
+  await page.goto('/admin/print-texts');
+  await expect(page.getByRole('heading', { level: 1, name: 'Print texts' })).toBeVisible();
+});

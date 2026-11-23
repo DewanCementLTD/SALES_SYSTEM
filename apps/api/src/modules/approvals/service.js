@@ -115,7 +115,7 @@ export async function loadRequest(tx, reqId, { forUpdate = false } = {}) {
 }
 
 /** In-app notification to every user holding `role` in `brnch` (BR-APR-03, BR-NTF-03). */
-async function notifyRole(tx, role, brnch, { title, body, link }, now) {
+export async function notifyRole(tx, role, brnch, { title, body, link }, now) {
   const users = await usersWithRole(tx, role, brnch);
   for (const u of users) {
     const id = await tx.nextId('SEQ_USER_NOTIFICATION');

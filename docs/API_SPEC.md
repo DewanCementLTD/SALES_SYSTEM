@@ -368,6 +368,8 @@ Cancellation advices (P2-08, built 23 Nov 2026): `GET /cancellations?kind=order|
 
 ## 15. Approvals & notifications
 
+Admin texts (built 23 Nov 2026): `GET|PUT /admin/templates` (`admin.templates`; body `{ templateCode, channel: SMS|WA|EMAIL, scope: 0|1|2, subject?, body, active }`) and `GET|PUT /admin/print-texts` (`admin.print_texts`; body `{ textCode, srNo, scope: 0|1|2, body, active }`); upsert only, never deleted. Dealer messages are queued by the document commands (BRV verify, OC confirm per DO, DO send, permit issue) per customer preference.
+
 | Method | Path                                                                                | Permission            | Notes                                                                                             |
 | ------ | ----------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
 | GET    | `/approvals/inbox?status=PENDING`                                                   | `approval.inbox`      | Requests whose current level role ∈ user's roles in that branch                                   |

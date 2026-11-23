@@ -5,7 +5,7 @@
 import { dec, repriceImpact } from '@dcl/shared';
 import { recordAudit } from '../audit/service.js';
 import * as balance from '../ledger/balance.js';
-import { enqueue } from '../outbox/service.js';
+import { notifyRole } from '../approvals/service.js';
 import { getDo, holdDo, keyOf } from './service.js';
 
 const toDate = (s) => new Date(`${s}T00:00:00+05:00`);
@@ -90,16 +90,18 @@ export async function apply(tx, actor, brnch, body) {
     });
   }
   if (held.length) {
-    await enqueue(tx, {
+    // BR-PRC-08: Sales collects the difference or cancels the DO
+    await notifyRole(
+      tx,
+      'SALES_MANAGER',
       brnch,
-      eventType: 'REPRICE_HOLD',
-      aggregateType: 'DELIVERY_ORDER',
-      aggregateKey: `${brnch}|${body.productCode}|${body.effectiveFrom}`,
-      channel: 'INAPP',
-      dedupKey: `REPRICE_HOLD|${brnch}|${body.productCode}|${body.effectiveFrom}|${actor.now.getTime()}`,
-      payload: { held, newRate: body.newRate, effectiveFrom: body.effectiveFrom },
-      now: actor.now,
-    });
+      {
+        title: `${held.length} DO(s) on hold after re-pricing`,
+        body: `${body.productCode} at ${body.newRate} from ${body.effectiveFrom}: collect the shortfall or cancel.`,
+        link: '/delivery/outstanding',
+      },
+      actor.now,
+    );
   }
   await recordAudit(tx, actor.audit, {
     entity: 'DELIVERY_ORDER',

@@ -25,7 +25,7 @@ import { writeOrderAdvice } from '../cancellations/service.js';
 import * as balance from '../ledger/balance.js';
 import * as ledger from '../ledger/service.js';
 import { nextNumber } from '../numbering/service.js';
-import { enqueue } from '../outbox/service.js';
+import { notifyDealer } from '../notifications/dealer.js';
 import { SettingsReader } from '../settings/service.js';
 import { cancelOcRow, createDraftOc } from './builder.js';
 import * as repo from './repo.js';
@@ -378,14 +378,18 @@ export async function confirmOc(tx, actor, brnch, ocNo, rowVer, { doType }) {
         qtyTon: dec(line.qtyTon).toFixed(3),
       },
     ]);
-    await enqueue(tx, {
+    // BR-NTF-01 / BR-DO-03: the dealer is told the DO is issued
+    await notifyDealer(tx, {
       brnch,
-      eventType: 'DO_ISSUED',
-      aggregateType: 'DELIVERY_ORDER',
-      aggregateKey: `${brnch}|${doType}|${doNo}`,
-      channel: 'JOB',
-      dedupKey: `DO_ISSUED|${brnch}|${doType}|${doNo}`,
-      payload: { brnch, doType, doNo, ocNo, customerCode: oc.customerCode },
+      event: 'DO_ISSUED',
+      docKey: `${brnch}|${doType}|${doNo}`,
+      customerCode: oc.customerCode,
+      vars: {
+        DO_NO: `${doNo}.${brnch}`,
+        QTY: dec(line.qtyTon).toFixed(2),
+        PRODUCT: oc.productCode,
+        OC_NO: ocNo,
+      },
       now: actor.now,
     });
     dos.push({ doType, doNo, srNo: line.srNo, qtyTon: dec(line.qtyTon).toFixed(3), rate, value });

@@ -1,12 +1,22 @@
 // BRV commands (BUSINESS_RULES §5, TASKS P2-04). ENTERED → VERIFIED (ledger credit in DO and DC,
 // BR-BRV-04) → CLEARED; VERIFIED/CLEARED → BOUNCED (ledger debit "Cheque return", BR-BRV-05);
 // ENTERED → CANCELLED (BR-BRV-06). Maker ≠ verifier (BR-BRV-03). One transaction per command.
-import { MASTERS, canVerify, checkTransition, dec, fiscalYearOf, narration } from '@dcl/shared';
+import {
+  MASTERS,
+  canVerify,
+  checkTransition,
+  dec,
+  displayDate,
+  fiscalYearOf,
+  formatAmount,
+  narration,
+} from '@dcl/shared';
 import { Errors } from '../../lib/errors.js';
 import { recordAudit } from '../audit/service.js';
 import { writeReceiptAdvice } from '../cancellations/service.js';
 import * as ledger from '../ledger/service.js';
 import { refExists } from '../masters/repo.js';
+import { notifyDealer } from '../notifications/dealer.js';
 import { nextNumber } from '../numbering/service.js';
 import * as repo from './repo.js';
 
@@ -118,6 +128,19 @@ export async function verifyBrv(tx, actor, brnch, receiptNo, rowVer, { method, b
     { ...entry, ledgerType: 'DO' },
     { ...entry, ledgerType: 'DC' },
   ]);
+  // BR-NTF-01: tell the dealer the payment is received
+  await notifyDealer(tx, {
+    brnch,
+    event: 'BRV_VERIFIED',
+    docKey: keyOf(brnch, receiptNo),
+    customerCode: brv.customerCode,
+    vars: {
+      AMOUNT: formatAmount(brv.amount),
+      BRV_NO: receiptNo,
+      BRV_DATE: displayDate(`${brv.brvDate}T00:00:00+05:00`),
+    },
+    now: actor.now,
+  });
   await audit(tx, actor, brnch, receiptNo, 'VERIFY', {
     newValues: { method, bankRef, remarks, amount: brv.amount },
   });

@@ -17,7 +17,7 @@ import { onApproved, onRejected, requestApproval } from '../approvals/service.js
 import { recordAudit } from '../audit/service.js';
 import { writeOrderAdvice } from '../cancellations/service.js';
 import * as ledger from '../ledger/service.js';
-import { enqueue } from '../outbox/service.js';
+import { notifyDealer } from '../notifications/dealer.js';
 
 const ENTITY = 'DELIVERY_ORDER';
 const iso = (d) => (d ? businessDate(d) : null);
@@ -307,21 +307,21 @@ export async function releaseDo(tx, actor, brnch, doType, doNo, rowVer) {
 export async function sendDo(tx, actor, brnch, doType, doNo, channels) {
   const d = await getDo(tx, brnch, doType, doNo);
   if (d.status === 'CANCELLED') throw Errors.invalidState('A cancelled DO is not sent');
-  const ids = [];
-  for (const ch of channels) {
-    const r = await enqueue(tx, {
-      brnch,
-      eventType: 'DO_SEND',
-      aggregateType: ENTITY,
-      aggregateKey: keyOf(brnch, doType, doNo),
-      channel: ch,
-      recipient: d.customerMobile,
-      dedupKey: `DO_SEND|${keyOf(brnch, doType, doNo)}|${ch}|${actor.now.getTime()}`,
-      payload: { brnch, doType, doNo, customerCode: d.customerCode },
-      now: actor.now,
-    });
-    ids.push(r.outboxId);
-  }
+  const ids = await notifyDealer(tx, {
+    brnch,
+    event: 'DO_ISSUED',
+    docKey: keyOf(brnch, doType, doNo),
+    customerCode: d.customerCode,
+    vars: {
+      DO_NO: `${doNo}.${brnch}`,
+      QTY: dec(d.qtyTon).toFixed(2),
+      PRODUCT: d.productCode,
+      OC_NO: d.ocNo ?? '',
+    },
+    now: actor.now,
+    channels,
+    resend: true,
+  });
   await tx.exec(
     `UPDATE DELIVERY_ORDER SET SENT_TO_DEALER_ON = :now WHERE BRNCH = :b AND DO_TYPE = :t AND DEL_ORDER_NO = :n`,
     { now: actor.now, b: brnch, t: doType, n: doNo },

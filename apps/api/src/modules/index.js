@@ -19,6 +19,7 @@ import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
 import srfRoutes from './srf/routes.js';
 import taxRoutes from './tax/routes.js';
+import textRoutes from './texts/routes.js';
 import userRoutes from './users/routes.js';
 
 /** @param {import('fastify').FastifyInstance} app */
@@ -44,4 +45,5 @@ export async function registerModules(app) {
   await app.register(doRoutes, { prefix: '/api/v1' });
   await app.register(permitRoutes, { prefix: '/api/v1' });
   await app.register(cancellationRoutes, { prefix: '/api/v1' });
+  await app.register(textRoutes, { prefix: '/api/v1' });
 }

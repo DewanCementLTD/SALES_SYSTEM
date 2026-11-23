@@ -14,6 +14,8 @@ import {
 } from '@dcl/api/modules/outbox/service';
 import { systemClock } from '@dcl/shared';
 import { createSmsDriver } from './drivers/sms.js';
+import { createEmailDriver } from './drivers/email.js';
+import { waLink } from './drivers/whatsapp.js';
 import { closeBrowser, createPdfProcessor } from './pdf.js';
 
 const config = loadConfig({ ...process.env, DB_POOL_MAX: process.env.WORKER_DB_POOL_MAX ?? '6' });
@@ -40,6 +42,7 @@ const queues = Object.fromEntries(
 );
 
 const sms = createSmsDriver(process.env, log);
+const email = createEmailDriver(process.env, log);
 
 /** @type {Record<string, (job: import('bullmq').Job) => Promise<unknown>>} */
 const processors = {
@@ -55,14 +58,18 @@ const processors = {
     const text = payload?.text ?? `DCL: ${eventType}`;
     return sms.send(recipient, text);
   },
-  // P2-09 implements e-mail (company SMTP for system mail) and WhatsApp link messages.
-  email: async (job) =>
-    log.info({ outboxId: job.data.outboxId }, 'email processor not implemented yet (P2-09)'),
-  whatsapp: async (job) =>
-    log.info(
-      { outboxId: job.data.outboxId },
-      'whatsapp link processor not implemented yet (P2-09)',
-    ),
+  // BR-NTF-01 (P2-09): company SMTP (console driver without SMTP_HOST)
+  email: async (job) => {
+    const { recipient, payload, eventType } = job.data;
+    return email.send(recipient, payload?.subject ?? `DCL: ${eventType}`, payload?.text ?? '');
+  },
+  // click-to-chat: the link is the result (shown with the outbox row); no WhatsApp API
+  whatsapp: async (job) => {
+    const { recipient, payload } = job.data;
+    const link = waLink(recipient, payload?.text ?? '');
+    if (!link) throw new Error('Recipient is not a mobile number');
+    return { link };
+  },
 };
 
 const workers = Object.entries(processors).map(([name, fn]) => {

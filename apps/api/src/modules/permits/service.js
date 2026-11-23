@@ -25,6 +25,7 @@ import { recordAudit } from '../audit/service.js';
 import * as customers from '../customers/repo.js';
 import * as balance from '../ledger/balance.js';
 import * as ledger from '../ledger/service.js';
+import { notifyDealer } from '../notifications/dealer.js';
 import { nextNumber } from '../numbering/service.js';
 import { SHEET_STATUS_SQL } from '../pricing/rate-sheets.js';
 import { SettingsReader } from '../settings/service.js';
@@ -488,6 +489,14 @@ export async function issuePermit(tx, actor, brnch, permitNo, rowVer) {
       qtyTon: p.qtyTon,
     },
   ]);
+  await notifyDealer(tx, {
+    brnch,
+    event: 'PERMIT_ISSUED',
+    docKey: keyOf(brnch, permitNo),
+    customerCode: p.customerCode,
+    vars: { PERMIT_NO: permitNo, QTY: dec(p.qtyTon).toFixed(2), PRODUCT: p.productCode },
+    now: actor.now,
+  });
   await audit(tx, actor, brnch, permitNo, 'ISSUE', {
     newValues: { value: p.value, available: bal.available, shortfall: short },
   });
