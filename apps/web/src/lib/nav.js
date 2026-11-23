@@ -152,7 +152,13 @@ export const NAV = [
     items: [
       { label: 'Plant queue', href: '/plant/queue', perm: ['gate.view'], phase: 'P3', built: true },
       { label: 'Gate-in', href: '/plant/gate-in', perm: ['gate.in'], phase: 'P3', built: true },
-      { label: 'Weighing', href: '/plant/weighing', perm: ['weigh.view'], phase: 'P3' },
+      {
+        label: 'Weighing',
+        href: '/plant/weighing',
+        perm: ['weigh.view'],
+        phase: 'P3',
+        built: true,
+      },
       { label: 'Delivery challans', href: '/plant/dc', perm: ['dc.view'], phase: 'P3' },
       { label: 'Exit', href: '/plant/exit', perm: ['gate.exit'], phase: 'P3' },
       { label: 'Offline sync', href: '/plant/sync', perm: ['sync.resolve'], phase: 'P3' },

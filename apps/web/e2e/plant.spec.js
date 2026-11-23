@@ -36,3 +36,12 @@ test('P3-04: plant queue lists the trucks inside', async ({ page }) => {
   await expect(page.getByLabel('Loading')).toHaveCount(0);
   await page.screenshot({ path: `${SHOTS}/33-plant-queue.png` });
 });
+
+test('P3-05: weighing screen shows the agent state and the trucks to weigh', async ({ page }) => {
+  await login(page);
+  await page.goto('/plant/weighing');
+  await expect(page.getByRole('heading', { level: 1, name: 'Weighing' })).toBeVisible();
+  await expect(page.getByText('Weighbridge agent not running on this PC')).toBeVisible();
+  await expect(page.getByLabel('Live weight')).toContainText('— — —');
+  await page.screenshot({ path: `${SHOTS}/34-weighing.png` });
+});

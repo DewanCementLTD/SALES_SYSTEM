@@ -7,6 +7,7 @@ import { SettingsReader } from '../settings/service.js';
 import { receiveReading } from './readings.js';
 import * as gate from './gate.js';
 import * as scan from './scan.js';
+import * as weighing from './weighing.js';
 
 const zReading = z.object({
   deviceId: z.string().regex(/^[A-Z0-9][A-Z0-9-]{2,39}$/),
@@ -303,5 +304,89 @@ export default async function plantRoutes(app) {
         request.txOpts('plant.board'),
       ),
     }),
+  );
+
+  // ---- weighing (P3-05) ----
+  const zWeighSource = z.union([
+    z.object({
+      deviceId: z.string().regex(/^[A-Z0-9][A-Z0-9-]{2,39}$/),
+      readingId: z.string().regex(/^[A-Za-z0-9-]{8,60}$/),
+    }),
+    z.object({ weightKg: z.number().int().min(1).max(200000), reason: zReason }),
+  ]);
+  const zGpParams = z.object({ gpId: z.coerce.number().int().positive() });
+  /** gate pass of my branch, else 404; manual weights need weigh.manual (BR-WGT-02) */
+  const plantCommand = (path, perm, body, summary, fn, response) =>
+    app.post(
+      `/plant/gate-passes/:gpId/${path}`,
+      {
+        config: { permission: perm, idempotency: 'required' },
+        schema: { tags, summary, params: zGpParams, body, response: { 200: response } },
+      },
+      async (request) => {
+        // agent reading: weigh.capture; weight typed by hand: weigh.manual (BR-WGT-02)
+        if (request.body && ('weightKg' in request.body || 'readingId' in request.body)) {
+          const perms = await request.authz.permissions(request.session.brnch);
+          const need = 'weightKg' in request.body ? P.weigh.manual : P.weigh.capture;
+          if (!perms.has(need))
+            throw Errors.forbidden(
+              need === P.weigh.manual
+                ? 'You need weigh.manual to enter a weight by hand'
+                : 'You need weigh.capture to take the weighbridge reading',
+            );
+        }
+        return app.db.withTx(
+          async (tx) => {
+            const gp = await tx.one('SELECT BRNCH FROM GATE_PASS WHERE GP_ID = :id', {
+              id: request.params.gpId,
+            });
+            if (!gp || Number(gp.BRNCH) !== request.session.brnch)
+              throw Errors.notFound(`Gate pass ${request.params.gpId}`);
+            return fn(tx, actor(request), request.params.gpId, request.body);
+          },
+          request.txOpts(`plant.${path}`),
+        );
+      },
+    );
+  const zWeighResult = z.object({
+    gatePass: zGatePassFull,
+    net: z.number(),
+    variance: z.number(),
+    variancePct: z.string(),
+    direction: z.enum(['OVER', 'UNDER', 'EXACT']),
+    varianceStatus: z.enum(['OK', 'BLOCKED']),
+    toleranceKg: z.number(),
+  });
+  plantCommand(
+    'tare',
+    [P.weigh.capture, P.weigh.manual],
+    zWeighSource,
+    "Tare (BR-WGT-01/02/03): { deviceId, readingId } from the agent, or { weightKg, reason } with weigh.manual; warns when far from the vehicle's last tare",
+    (tx, a, id, b) => weighing.captureTare(tx, a, id, b),
+    z.object({ gatePass: zGatePassFull, warnings: z.array(z.string()) }),
+  );
+  plantCommand(
+    'gross',
+    [P.weigh.capture, P.weigh.manual],
+    zWeighSource,
+    'Gross (BR-WGT-03…06): net, variance vs planned, OK or VARIANCE_BLOCKED; net split over the DC lines',
+    (tx, a, id, b) => weighing.captureGross(tx, a, id, b),
+    zWeighResult,
+  );
+  plantCommand(
+    'reweigh',
+    [P.weigh.capture, P.weigh.manual],
+    zWeighSource,
+    'New gross while the variance blocks the truck (BR-WGT-05); earlier readings stay',
+    (tx, a, id, b) => weighing.captureGross(tx, a, id, b, { reweigh: true }),
+    zWeighResult,
+  );
+  plantCommand(
+    'request-weight-override',
+    P.weigh.override,
+    z.object({ reason: zReason }),
+    'Supervisor override of a blocked variance → approval WEIGHT_OVERRIDE (BR-WGT-05)',
+    (tx, a, id, b) => weighing.requestWeightOverride(tx, a, id, b.reason),
+    z.object({ gatePass: zGatePassFull, requestId: z.number().nullable() }),
   );
 }
