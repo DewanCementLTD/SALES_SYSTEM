@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { resolveListBranches } from '../../lib/branch-scope.js';
 import { etag, ifMatch } from '../../lib/http.js';
 import { enqueue } from '../outbox/service.js';
+import * as reprice from './reprice.js';
 import * as svc from './service.js';
 
 const zParams = z.object({
@@ -217,5 +218,45 @@ export default async function doRoutes(app) {
       }, request.txOpts('do.print'));
       return reply.status(202).send({ outboxId: res.outboxId, entityKey });
     },
+  );
+
+  const zReprice = z.object({
+    productCode: z.string().trim().min(1).max(4),
+    priceCode: z.string().trim().max(10).optional(),
+    customerCode: z.string().trim().max(11).optional(),
+    newRate: z.string().regex(/^\d{1,10}(\.\d{1,2})?$/, 'Rate: a number with up to 2 decimals'),
+    effectiveFrom: zIsoDate,
+  });
+  app.post(
+    '/reprice/preview',
+    {
+      config: { permission: P.do.reprice },
+      schema: {
+        tags,
+        summary: 'Open DOs past their rate lock with old/new rate and shortfall (BR-PRC-07/08)',
+        body: zReprice,
+      },
+    },
+    async (request) =>
+      app.db.read(
+        (tx) => reprice.preview(tx, request.session.brnch, request.body, app.clock.now()),
+        request.txOpts('reprice.preview'),
+      ),
+  );
+  app.post(
+    '/reprice/apply',
+    {
+      config: { permission: P.do.reprice },
+      schema: {
+        tags,
+        summary: 'Put the DOs with a shortfall ON_HOLD and notify Sales (BR-PRC-08)',
+        body: zReprice,
+      },
+    },
+    async (request) =>
+      app.db.withTx(
+        (tx) => reprice.apply(tx, actor(request), request.session.brnch, request.body),
+        request.txOpts('reprice.apply'),
+      ),
   );
 }

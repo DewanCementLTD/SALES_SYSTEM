@@ -115,3 +115,41 @@ describe('DO (P2-06)', () => {
     expect((await fin.get('/api/v1/do/1/OS/1')).statusCode).toBe(404);
   });
 });
+
+describe('re-pricing (P2-07)', () => {
+  it('BR-PRC-07/08: only DOs past the rate lock; a shortfall puts the DO on hold', async () => {
+    await seedDo();
+    // lock of the seeded DO ends 2026-12-07 (issue + 14 days)
+    await t.db.withTx((tx) =>
+      tx.exec(
+        'UPDATE DELIVERY_ORDER SET RATE_LOCK_UNTIL = :d WHERE BRNCH = 1 AND DEL_ORDER_NO = :n',
+        {
+          d: new Date('2026-12-07T00:00:00+05:00'),
+          n: DO_NO,
+        },
+      ),
+    );
+    const sm = await as({ 1: ['SALES_MANAGER'] });
+    const body = {
+      productCode: 'OPC',
+      customerCode: CUST,
+      newRate: '25400',
+      effectiveFrom: '2026-12-01',
+    };
+    let r = await sm.post('/api/v1/reprice/preview', body);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().lines).toHaveLength(0); // still locked on 1 Dec
+
+    r = await sm.post('/api/v1/reprice/preview', { ...body, effectiveFrom: '2026-12-10' });
+    const line = r.json().lines.find((l) => l.doNo === DO_NO);
+    // 25 t × (25,400 − 24,400) = 25,000 extra; available is negative (DO debit, no money)
+    expect(line).toMatchObject({ oldRate: '24400.00', newRate: '25400.00', extra: '25000.00' });
+    expect(line.shortfall).toBe('25000.00');
+
+    r = await sm.post('/api/v1/reprice/apply', { ...body, effectiveFrom: '2026-12-10' });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().held.map((h) => h.doNo)).toContain(DO_NO);
+    const d = (await sm.get(`/api/v1/do/1/OS/${DO_NO}`)).json();
+    expect(d).toMatchObject({ status: 'ON_HOLD', holdShortfall: '25000.00' });
+  });
+});

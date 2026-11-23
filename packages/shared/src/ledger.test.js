@@ -121,3 +121,25 @@ describe('available balance (P1-08)', () => {
     expect(shortfall('400', '1000')).toBe('0.00');
   });
 });
+
+describe('re-pricing (P2-07)', () => {
+  it('BR-PRC-08: extras use the customer balance in order; the rest is the shortfall', async () => {
+    const { repriceImpact } = await import('./index.js');
+    const r = repriceImpact(
+      [
+        { key: 'a', customerCode: 'C1', remainingTon: '10', rate: '24000' },
+        { key: 'b', customerCode: 'C1', remainingTon: '10', rate: '24000' },
+        { key: 'c', customerCode: 'C2', remainingTon: '5', rate: '25000' },
+        { key: 'd', customerCode: 'C2', remainingTon: '5', rate: '26000' },
+      ],
+      { C1: '15000', C2: '-100' },
+      '25500',
+    );
+    expect(r.map((x) => [x.key, x.extra, x.shortfall])).toEqual([
+      ['a', '15000.00', '0.00'],
+      ['b', '15000.00', '15000.00'],
+      ['c', '2500.00', '2500.00'],
+      ['d', '-2500.00', '0.00'], // a lower rate never holds a DO
+    ]);
+  });
+});

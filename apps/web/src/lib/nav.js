@@ -44,7 +44,13 @@ export const NAV = [
         phase: 'P2',
         built: true,
       },
-      { label: 'Re-pricing', href: '/orders/repricing', perm: ['do.reprice'], phase: 'P2' },
+      {
+        label: 'Re-pricing',
+        href: '/orders/repricing',
+        perm: ['do.reprice'],
+        phase: 'P2',
+        built: true,
+      },
       {
         label: 'Order cancellation',
         href: '/orders/cancellations',

@@ -45,3 +45,32 @@ export function shortfall(value, available) {
   const s = dec(value).minus(dec(available));
   return s.gt(0) ? s.toFixed(2) : '0.00';
 }
+
+/**
+ * BR-PRC-07/08 re-pricing impact. For each open DO past its rate lock: extra = remaining tons ×
+ * (new rate − old rate). Per customer the extras use up the available balance in DO order; the
+ * part not covered is the DO's shortfall (→ ON_HOLD).
+ * @param {{ key: string, customerCode: string, remainingTon: any, rate: any }[]} dos in order
+ * @param {Record<string, any>} availableByCustomer
+ * @param {any} newRate
+ */
+export function repriceImpact(dos, availableByCustomer, newRate) {
+  const left = Object.fromEntries(Object.entries(availableByCustomer).map(([c, v]) => [c, dec(v)]));
+  return dos.map((d) => {
+    const extra = roundMoney(dec(d.remainingTon).times(dec(newRate).minus(dec(d.rate ?? 0))));
+    const avail = left[d.customerCode] ?? dec(0);
+    let short = dec(0);
+    if (extra.gt(0)) {
+      const covered = avail.gt(0) ? (avail.gte(extra) ? extra : avail) : dec(0);
+      short = extra.minus(covered);
+      left[d.customerCode] = avail.minus(extra);
+    }
+    return {
+      ...d,
+      oldRate: dec(d.rate ?? 0).toFixed(2),
+      newRate: dec(newRate).toFixed(2),
+      extra: extra.toFixed(2),
+      shortfall: short.toFixed(2),
+    };
+  });
+}
