@@ -97,8 +97,20 @@ export const NAV = [
     label: 'Delivery',
     icon: Truck,
     items: [
-      { label: 'Delivery orders', href: '/delivery/do', perm: ['do.view'], phase: 'P2' },
-      { label: 'Outstanding DOs', href: '/delivery/outstanding', perm: ['do.view'], phase: 'P2' },
+      {
+        label: 'Delivery orders',
+        href: '/delivery/do',
+        perm: ['do.view'],
+        phase: 'P2',
+        built: true,
+      },
+      {
+        label: 'Outstanding DOs',
+        href: '/delivery/outstanding',
+        perm: ['do.view'],
+        phase: 'P2',
+        built: true,
+      },
       { label: 'DO adjustment', href: '/delivery/adjustment', perm: ['do.adjust'], phase: 'P2' },
     ],
   },

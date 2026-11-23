@@ -28,6 +28,8 @@ export const qk = {
   brvs: (kind, params) => ['brv', kind, params],
   brv: (brnch, no) => ['brv', 'detail', Number(brnch), String(no)],
   ocs: (params) => ['oc', 'list', params],
+  dos: (params) => ['do', 'list', params],
+  do: (brnch, type, no) => ['do', 'detail', Number(brnch), type, String(no)],
   oc: (brnch, no) => ['oc', 'detail', Number(brnch), String(no)],
   ocBalance: (brnch, no, ver) => ['customers', 'balance', 'oc', Number(brnch), String(no), ver],
 };

@@ -282,6 +282,8 @@ Built 23 Nov 2026. Every BRV has `CASH_CHEQ_CD = 'Q'` (all legacy rows), so path
 | POST   | `/reprice/preview`                                            | `do.reprice`      | `{ brnch, priceCode?                                   | customer?, product, region?, newRate, effectiveFrom }` → open DOs past lock with shortfall |
 | POST   | `/reprice/apply`                                              | `do.reprice`      | Puts listed DOs ON_HOLD with shortfall; notifies sales |
 
+Built 23 Nov 2026 (DO part): list (`outstanding=true` = ISSUED/PARTLY_DISPATCHED/ON_HOLD), get, `POST …/print` (queues the PDF → 202 `{ outboxId, entityKey }`, file in `GET /files?entity=DELIVERY_ORDER&key={brnch}|{doType}|{doNo}`; QR payload docNo = `{doType}-{doNo}`), `…/send` (queues `DO_SEND` per channel; delivered with P2-09), `…/cancel` → `{ do, requestId, released }` (approval rule DO_CANCEL when active; on approval the undispatched value is credited to the DO ledger), `…/hold` `{ reason, shortfall? }`, `…/release` (back to ISSUED or PARTLY_DISPATCHED). Commands need `If-Match`. Legacy DOs: CANCEL_CODE 'Y' = cancelled, otherwise status from DISPATCHED vs DO_QUANTITY. Not built yet: `…/adjust` (DO adjustment advice) and re-pricing (P2-07).
+
 ## 11. Plant
 
 All plant POSTs require `Idempotency-Key`. Plant users and devices only see their branch.

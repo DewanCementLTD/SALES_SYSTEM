@@ -4,6 +4,7 @@ import auditRoutes from './audit/routes.js';
 import brvRoutes from './brv/routes.js';
 import authRoutes from './auth/routes.js';
 import customerRoutes from './customers/routes.js';
+import doRoutes from './do/routes.js';
 import fileRoutes from './files/routes.js';
 import geoRoutes from './geo/routes.js';
 import ledgerRoutes from './ledger/routes.js';
@@ -38,4 +39,5 @@ export async function registerModules(app) {
   await app.register(srfRoutes, { prefix: '/api/v1' });
   await app.register(brvRoutes, { prefix: '/api/v1' });
   await app.register(ocRoutes, { prefix: '/api/v1' });
+  await app.register(doRoutes, { prefix: '/api/v1' });
 }

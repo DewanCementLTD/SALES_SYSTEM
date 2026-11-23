@@ -5,6 +5,7 @@ import { barcodeSvg, qrSvg } from './codes.js';
 import { html, raw } from './html.js';
 import brvReceipt from './brv-receipt.js';
 import contractReview from './contract-review.js';
+import deliveryOrder from './delivery-order.js';
 import { footerTemplate, page } from './letterhead.js';
 
 export { html, raw, escapeHtml } from './html.js';
@@ -70,6 +71,7 @@ export const TEMPLATES = {
   sample,
   'contract-review': contractReview,
   'brv-receipt': brvReceipt,
+  'delivery-order': deliveryOrder,
 };
 
 /** Render a registered template to HTML. */

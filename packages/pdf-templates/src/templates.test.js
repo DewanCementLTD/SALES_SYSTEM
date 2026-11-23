@@ -77,3 +77,42 @@ describe('Contract Review Form (BR-SRF-07)', () => {
     expect(out.html).not.toContain('class="watermark"');
   });
 });
+
+describe('Delivery Order print (BR-DO-03, BR-QR-01)', () => {
+  const doc = {
+    doType: 'OS',
+    doNo: '22702003944',
+    ocNo: '227000758',
+    issueDate: '2026-11-23',
+    customerCode: '912-351',
+    customerName: 'MASHALLAH RICE MILL',
+    productCode: 'OPC',
+    qtyTon: '35.000',
+    bags: 700,
+    qrVer: 1,
+    status: 'ISSUED',
+  };
+  it('carries a signed QR for the DO and the barcode; terms only when set up', async () => {
+    const out = await renderTemplate(
+      'delivery-order',
+      { brnch: 1, do: doc, terms: [] },
+      { runAt, qrSecret },
+    );
+    expect(out.html).toContain('No. 22702003944.1');
+    expect(out.html).toContain('Terms text not set up');
+    await expect(verifyQr(out.qrPayload, qrSecret)).resolves.toMatchObject({
+      ok: true,
+      doc: { docType: 'DO', brnch: 1, docNo: 'OS-22702003944', ver: 1 },
+    });
+    expect(out.html).not.toContain('class="watermark"');
+  });
+  it('BR-DO-03: a cancelled DO prints with the CANCELLED watermark', async () => {
+    const out = await renderTemplate(
+      'delivery-order',
+      { brnch: 1, do: { ...doc, status: 'CANCELLED' }, terms: ['Lift within 48 hours.'] },
+      { runAt, qrSecret },
+    );
+    expect(out.html).toContain('class="watermark"><span>CANCELLED');
+    expect(out.html).toContain('Lift within 48 hours.');
+  });
+});
