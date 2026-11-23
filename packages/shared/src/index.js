@@ -24,3 +24,4 @@ export * from './do.js';
 export * from './device.js';
 export * from './weigh.js';
 export * from './gate.js';
+export * from './invoice.js';

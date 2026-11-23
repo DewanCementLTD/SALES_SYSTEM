@@ -10,6 +10,7 @@ import { onApproved, onRejected, requestApproval } from '../approvals/service.js
 import { recordAudit } from '../audit/service.js';
 import { SettingsReader } from '../settings/service.js';
 import { getGatePass } from './gate.js';
+import { tryFinalise } from './invoice.js';
 import { getReading } from './readings.js';
 
 const ENTITY = 'GATE_PASS';
@@ -203,7 +204,12 @@ export async function captureGross(tx, actor, gpId, src, { reweigh = false } = {
     reason: t.reason,
     newValues: { grossKg: t.kg, netKg, ...v, source: t.source, ticketId: t.ticketId },
   });
+  // BR-INV-01: variance OK → invoices at once
+  const fin = v.withinTolerance
+    ? await tryFinalise(tx, actor, gp.gpId)
+    : { invoices: [], invoiceProblem: null };
   return {
+    ...fin,
     gatePass: await getGatePass(tx, gp.gpId),
     net: netKg,
     variance: v.varianceKg,
@@ -227,6 +233,8 @@ async function applyOverride(tx, actor, gp, requestId) {
     brnch: gp.brnch,
     newValues: { varianceKg: gp.varianceKg, requestId },
   });
+  // BR-INV-01: an approved override finalises the invoices
+  return tryFinalise(tx, actor, gp.gpId);
 }
 
 /** POST …/request-weight-override (BR-WGT-05): approval WEIGHT_OVERRIDE, or at once without a rule. */
@@ -262,8 +270,11 @@ export async function requestWeightOverride(tx, actor, gpId, reason) {
     reason,
     newValues: { requestId: res.requestId ?? null },
   });
-  if (!res.required) await applyOverride(tx, actor, gp, null);
+  const fin = res.required
+    ? { invoices: [], invoiceProblem: null }
+    : await applyOverride(tx, actor, gp, null);
   return {
+    ...fin,
     gatePass: await getGatePass(tx, gp.gpId),
     requestId: res.required ? res.requestId : null,
   };

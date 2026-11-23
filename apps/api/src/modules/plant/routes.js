@@ -6,6 +6,7 @@ import { Errors } from '../../lib/errors.js';
 import { SettingsReader } from '../settings/service.js';
 import { receiveReading } from './readings.js';
 import * as gate from './gate.js';
+import * as invoice from './invoice.js';
 import * as scan from './scan.js';
 import * as weighing from './weighing.js';
 
@@ -114,6 +115,28 @@ const zGatePassFull = zGatePass.extend({
   ),
   replay: z.boolean().optional(),
 });
+
+const zInvoiceBrief = z.object({
+  invoiceId: z.number(),
+  invoiceNo: z.string(),
+  doNo: z.string().nullable(),
+  qtyTon: z.string(),
+  ratePerTon: z.string(),
+  saleProceeds: z.string(),
+  salesTax: z.string(),
+  valueExcl: z.string().optional(),
+  fed: z.string(),
+  wht: z.string(),
+  totalCollectable: z.string(),
+});
+const zInvoiceRow = zInvoiceBrief.extend({
+  invoiceDate: z.string(),
+  status: z.string(),
+  fbrInvoiceNo: z.string().nullable(),
+});
+const zInvoiceProblem = z
+  .object({ code: z.string(), detail: z.string(), ruleId: z.string().nullable() })
+  .nullable();
 
 const zReceived = z.object({ readingId: z.string(), receivedOn: z.date(), duplicate: z.boolean() });
 
@@ -274,12 +297,15 @@ export default async function plantRoutes(app) {
         tags,
         summary: 'Gate pass with its DC lines, weights and variance',
         params: z.object({ gpId: z.coerce.number().int().positive() }),
-        response: { 200: zGatePassFull },
+        response: { 200: zGatePassFull.extend({ invoices: z.array(zInvoiceRow) }) },
       },
     },
     async (request) => {
       const gp = await app.db.read(
-        (tx) => gate.getGatePass(tx, request.params.gpId),
+        async (tx) => ({
+          ...(await gate.getGatePass(tx, request.params.gpId)),
+          invoices: await invoice.invoicesOf(tx, request.params.gpId),
+        }),
         request.txOpts('plant.gate-pass'),
       );
       if (!(await request.authz.permissions(gp.brnch)).has(P.gate.view))
@@ -356,6 +382,8 @@ export default async function plantRoutes(app) {
     direction: z.enum(['OVER', 'UNDER', 'EXACT']),
     varianceStatus: z.enum(['OK', 'BLOCKED']),
     toleranceKg: z.number(),
+    invoices: z.array(zInvoiceBrief),
+    invoiceProblem: zInvoiceProblem,
   });
   plantCommand(
     'tare',
@@ -387,6 +415,22 @@ export default async function plantRoutes(app) {
     z.object({ reason: zReason }),
     'Supervisor override of a blocked variance → approval WEIGHT_OVERRIDE (BR-WGT-05)',
     (tx, a, id, b) => weighing.requestWeightOverride(tx, a, id, b.reason),
-    z.object({ gatePass: zGatePassFull, requestId: z.number().nullable() }),
+    z.object({
+      gatePass: zGatePassFull,
+      requestId: z.number().nullable(),
+      invoices: z.array(zInvoiceBrief),
+      invoiceProblem: zInvoiceProblem,
+    }),
+  );
+  plantCommand(
+    'finalise',
+    [P.weigh.capture, P.dc.update],
+    z.object({}),
+    'Finalise the invoices again after fixing what was missing (BR-INV-01); normally automatic after the gross',
+    async (tx, a, id) => ({
+      invoices: await invoice.finalise(tx, a, id),
+      gatePass: await gate.getGatePass(tx, id),
+    }),
+    z.object({ invoices: z.array(zInvoiceBrief), gatePass: zGatePassFull }),
   );
 }

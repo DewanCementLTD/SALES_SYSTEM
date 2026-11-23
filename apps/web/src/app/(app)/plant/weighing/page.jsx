@@ -84,6 +84,27 @@ export default function WeighingPage() {
       toast.error(
         `Variance ${r.variance > 0 ? '+' : ''}${r.variance} kg is outside ±${r.toleranceKg} kg: re-weigh or ask for an override`,
       );
+    invoiceNews(r);
+  };
+  /** BR-INV-01: invoices made right after the weighing, or why not */
+  const invoiceNews = (r) => {
+    if (r.invoices?.length)
+      toast.success(
+        `${r.invoices.length} invoice(s) made: ${r.invoices.map((i) => i.invoiceNo).join(', ')}`,
+      );
+    if (r.invoiceProblem)
+      toast.error(`Not invoiced yet: ${r.invoiceProblem.detail}`, { duration: 10000 });
+  };
+  const finalise = async () => {
+    setBusy('fin');
+    setError(null);
+    try {
+      invoiceNews(await send('finalise', {}));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(null);
+    }
   };
   const captureFromAgent = async () => {
     setBusy('cap');
@@ -233,6 +254,7 @@ export default function WeighingPage() {
                       <th className="py-1">DO</th>
                       <th className="text-right">Planned (t)</th>
                       <th className="text-right">Net (t)</th>
+                      <th>Invoice</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -242,6 +264,9 @@ export default function WeighingPage() {
                         <td className="text-right tabular-nums">{fmtQty(l.plannedTon)}</td>
                         <td className="text-right tabular-nums">
                           {l.allocNetKg === null ? '—' : fmtQty(l.allocNetKg / 1000)}
+                        </td>
+                        <td className="font-mono">
+                          {g.invoices?.find((i) => i.invoiceId === l.invoiceId)?.invoiceNo ?? '—'}
                         </td>
                       </tr>
                     ))}
@@ -275,6 +300,13 @@ export default function WeighingPage() {
                     <Pencil className="size-4" /> Enter weight by hand
                   </Button>
                 )}
+                {['GROSS_DONE', 'OVERRIDDEN'].includes(g.status) &&
+                  s.can(['weigh.capture', 'dc.update']) && (
+                    <Button variant="outline" disabled={busy === 'fin'} onClick={finalise}>
+                      {busy === 'fin' && <Loader2 className="size-4 animate-spin" />} Finalise
+                      invoices
+                    </Button>
+                  )}
                 {g.status === 'VARIANCE_BLOCKED' && s.can('weigh.override') && (
                   <Button
                     variant="outline"
@@ -342,6 +374,7 @@ export default function WeighingPage() {
           toast.success(
             r.requestId ? `Sent for approval (request #${r.requestId})` : 'Override recorded',
           );
+          invoiceNews(r);
         }}
       />
     </>
