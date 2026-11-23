@@ -344,10 +344,10 @@ Gross response example (variance blocked):
 
 ## 13. Ledger
 
-| Method | Path                                    | Permission     | Notes                                                                               |
-| ------ | --------------------------------------- | -------------- | ----------------------------------------------------------------------------------- |
-| GET    | `/ledger/{brnch}/{customerCode}?type=DO | DC&from=&to=`  | `ledger.view`                                                                       | `{ opening, lines: [{ entryDate, docType, docNo, narration, debit, credit, running, link }], closing, totals }` |
-| GET    | `/ledger/recon?brnch=&date=`            | `ledger.recon` | Last nightly reconciliation result (not built yet: comes with the source documents) |
+| Method | Path                                    | Permission     | Notes                                                 |
+| ------ | --------------------------------------- | -------------- | ----------------------------------------------------- |
+| GET    | `/ledger/{brnch}/{customerCode}?type=DO | DC&from=&to=`  | `ledger.view`                                         | `{ opening, lines: [{ entryDate, docType, docNo, narration, debit, credit, running, link }], closing, totals }` |
+| GET    | `/ledger/recon?brnch=&date=`            | `ledger.recon` | Last nightly reconciliation result (P5-10, BR-LED-02) |
 
 Statement (built 23 Nov 2026): `GET /ledger/{brnch}/{customerCode}?type=DC|DO&from=YYYY-MM-DD&to=YYYY-MM-DD` (type defaults to DC) → `{ brnch, customerCode, customerName, ledgerType, from, to, opening, lines: [{ ledgerId, entryDate, docType, docYear, docNo, docLine, entryKind, narration, debit, credit, running, qtyTon, glCode, reversalOf }], totals: { debit, credit }, closing }`. Running = previous + debit − credit (positive = receivable, negative = advance). More than 5,000 lines in the range → 422 (choose a shorter range). Ledger rows are written only by the document services, inside their own transaction (`ledger.post`); there is no POST endpoint.
 
