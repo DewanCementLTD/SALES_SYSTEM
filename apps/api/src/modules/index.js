@@ -5,6 +5,7 @@ import authRoutes from './auth/routes.js';
 import customerRoutes from './customers/routes.js';
 import fileRoutes from './files/routes.js';
 import geoRoutes from './geo/routes.js';
+import ledgerRoutes from './ledger/routes.js';
 import masterRoutes from './masters/routes.js';
 import notificationRoutes from './notifications/routes.js';
 import outboxRoutes from './outbox/routes.js';
@@ -30,4 +31,5 @@ export async function registerModules(app) {
   await app.register(customerRoutes, { prefix: '/api/v1' });
   await app.register(taxRoutes, { prefix: '/api/v1' });
   await app.register(pricingRoutes, { prefix: '/api/v1' });
+  await app.register(ledgerRoutes, { prefix: '/api/v1' });
 }

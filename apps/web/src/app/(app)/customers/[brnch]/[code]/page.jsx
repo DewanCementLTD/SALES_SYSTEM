@@ -12,6 +12,7 @@ import { parseAsString, useQueryState } from 'nuqs';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { BalancePanel } from '@/components/customers/balance-panel';
 import { CreditTab } from '@/components/customers/credit';
 import { LinesTab } from '@/components/customers/lines-tab';
 import { CustomerStatusBadge } from '@/components/customers/status';
@@ -467,6 +468,9 @@ export default function CustomerDetailPage() {
           <aside className="space-y-4">
             <StatusPanel c={c} onChanged={refresh} />
             <SummaryPanel c={c} />
+            {s.can('customer.view_balance') && (
+              <BalancePanel brnch={Number(brnch)} code={code} canLedger={s.can('ledger.view')} />
+            )}
           </aside>
         </div>
       )}

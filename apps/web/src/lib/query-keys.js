@@ -21,4 +21,6 @@ export const qk = {
   geoSummary: (brnch) => ['geo', 'summary', brnch],
   customers: (params) => ['customers', 'list', params],
   customer: (brnch, code) => ['customers', 'detail', brnch, code],
+  customerBalance: (brnch, code) => ['customers', 'balance', Number(brnch), code],
+  ledger: (brnch, code, params) => ['ledger', Number(brnch), code, params],
 };

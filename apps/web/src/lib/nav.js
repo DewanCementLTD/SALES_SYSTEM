@@ -101,7 +101,13 @@ export const NAV = [
     label: 'Accounts',
     icon: Wallet,
     items: [
-      { label: 'Customer ledger', href: '/accounts/ledger', perm: ['ledger.view'], phase: 'P3' },
+      {
+        label: 'Customer ledger',
+        href: '/accounts/ledger',
+        perm: ['ledger.view'],
+        phase: 'P3',
+        built: true,
+      },
       { label: 'Credit / debit notes', href: '/accounts/notes', perm: ['note.view'], phase: 'P4' },
       {
         label: 'Balance transfers',
