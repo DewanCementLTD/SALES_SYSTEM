@@ -252,6 +252,63 @@ const DEFS = [
     descr: 'Seller STRN',
     perBranch: true,
   },
+  {
+    key: 'FBR_SELLER_NAME',
+    def: '',
+    type: 'STRING',
+    rule: 'BR-FBR-02',
+    descr: 'Seller business name as registered with FBR',
+    perBranch: true,
+  },
+  {
+    key: 'FBR_SELLER_PROVINCE',
+    def: '',
+    type: 'STRING',
+    rule: 'BR-FBR-02',
+    descr:
+      'Seller province as FBR spells it (e.g. Sindh, Khyber Pakhtunkhwa); also used for buyers without one',
+    perBranch: true,
+  },
+  {
+    key: 'FBR_SELLER_ADDRESS',
+    def: '',
+    type: 'STRING',
+    rule: 'BR-FBR-02',
+    descr: 'Seller address (plant)',
+    perBranch: true,
+  },
+  {
+    key: 'FBR_SALE_TYPE',
+    def: 'Goods (FED in ST mode)',
+    type: 'STRING',
+    rule: 'BR-FBR-02',
+    descr: 'FBR sale type of cement invoices (verify in the FBR sandbox)',
+    perBranch: true,
+  },
+  {
+    key: 'FBR_UOM',
+    def: 'MT',
+    type: 'STRING',
+    rule: 'BR-FBR-02',
+    descr: 'FBR unit of measure for tons (verify against the FBR UoM list)',
+    perBranch: true,
+  },
+  {
+    key: 'FBR_HS_CODE',
+    def: '',
+    type: 'STRING',
+    rule: 'BR-FBR-02',
+    descr: 'HS code of cement for FBR when the invoice has none (e.g. 2523.2900, to confirm)',
+    perBranch: true,
+  },
+  {
+    key: 'FBR_SCENARIO_ID',
+    def: '',
+    type: 'STRING',
+    rule: 'BR-FBR-01',
+    descr: 'FBR sandbox scenario id (sandbox only)',
+    perBranch: true,
+  },
 ];
 
 /** @type {Readonly<Record<string, SettingDef>>} */

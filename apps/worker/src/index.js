@@ -6,6 +6,7 @@ import pino from 'pino';
 import { loadConfig } from '@dcl/api/config';
 import { createDb } from '@dcl/api/lib/oracle/db';
 import { expireOverdue } from '@dcl/api/modules/approvals/service';
+import { submitInvoice } from '@dcl/api/modules/fbr/service';
 import {
   QUEUE_NAMES,
   markDeliveryFailed,
@@ -63,6 +64,13 @@ const processors = {
     const { recipient, payload, eventType } = job.data;
     return email.send(recipient, payload?.subject ?? `DCL: ${eventType}`, payload?.text ?? '');
   },
+  // BR-FBR-01…05 (P3-07): one invoice per job; throws only to retry (timeout / 5xx)
+  fbr: async (job) =>
+    submitInvoice(db, Number(job.data.payload?.invoiceId), {
+      encKey: config.APP_ENC_KEY,
+      now: () => systemClock.now(),
+      log,
+    }),
   // click-to-chat: the link is the result (shown with the outbox row); no WhatsApp API
   whatsapp: async (job) => {
     const { recipient, payload } = job.data;

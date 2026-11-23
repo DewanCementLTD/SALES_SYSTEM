@@ -354,6 +354,8 @@ Gross response example (variance blocked):
 | GET    | `…/fbr-submissions`                                       | `invoice.fbr_view`  | Attempts with request/response                          |
 | POST   | `…/fbr-retry`                                             | `invoice.fbr_retry` | Re-queue (FBR_REJECTED after correction or FBR_PENDING) |
 
+Built 23 Nov 2026 (P3-07): `GET /invoices?brnch=&status=&customer=&from=&to=` (status = FINAL / FBR_PENDING / FBR_ACCEPTED / FBR_REJECTED / CANCELLED; rows carry `fbrInvoiceNo` and, when rejected, `fbrError` = FBR's text), `GET /invoices/{brnch}/{year}/{invoiceNo}`, `GET …/fbr-submissions` → `{ items: [{ attemptNo, env, request, response, httpStatus, result: SENT|ACCEPTED|REJECTED|ERROR|TIMEOUT|UNKNOWN, fbrInvoiceNo, errorCode, errorMsg, durationMs }] }`, `POST …/fbr-retry` `{ confirmNotAccepted? }` → `{ outboxId }`. Submission runs in the worker (queue `fbr`): payload from the stored invoice (`buildFbrPayload`, `@dcl/shared`), POST {FBR_BASE_URL}/di_data/v1/di/postinvoicedata(_sb) with the branch token; no base URL outside PRODUCTION = mock driver (number `MOCK…`). The attempt is stored as SENT before the call; a SENT attempt (worker stopped mid-call) blocks automatic resend and `fbr-retry` answers 422 `BR-FBR-05` until `confirmNotAccepted: true` (Finance checked the FBR portal). Missing seller settings / buyer NTN → FBR_REJECTED "Not sent: missing …" without calling FBR. Print with FBR QR: P3-11. The field mapping and sale type must be verified in the FBR sandbox with DCL's token.
+
 ## 13. Ledger
 
 | Method | Path                                    | Permission     | Notes                                                 |

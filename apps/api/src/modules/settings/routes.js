@@ -1,6 +1,7 @@
 // /api/v1/admin/settings (API_SPEC §3, TASKS P0-11). Company level (BRNCH 0) only for SYS_ADMIN.
 import { P, SETTINGS } from '@dcl/shared';
 import { z } from 'zod';
+import { encryptSecret } from '../../lib/crypto.js';
 import { Errors } from '../../lib/errors.js';
 import { recordAudit } from '../audit/service.js';
 import { hasRoleAnywhere } from '../users/repo.js';
@@ -69,6 +70,11 @@ export default async function settingsRoutes(app) {
       if (!def) throw Errors.notFound('Setting');
       const problem = settingValueProblem(key, request.body.value);
       if (problem) throw Errors.validation(problem, [{ path: 'body.value', message: problem }]);
+      // secrets (FBR token …) are stored encrypted with APP_ENC_KEY (ARCHITECTURE §7)
+      const value =
+        def.secret && request.body.value
+          ? encryptSecret(request.body.value, app.config.APP_ENC_KEY)
+          : request.body.value;
       await app.db.withTx(async (tx) => {
         if (level === 0) {
           if (!(await hasRoleAnywhere(tx, request.session.userId, 'SYS_ADMIN'))) {
@@ -92,7 +98,7 @@ export default async function settingsRoutes(app) {
             {
               b: level,
               k: key,
-              v: request.body.value,
+              v: value,
               ub: request.session.usrid,
               now: app.clock.now(),
             },
@@ -104,7 +110,7 @@ export default async function settingsRoutes(app) {
             {
               b: level,
               k: key,
-              v: request.body.value,
+              v: value,
               t: def.type,
               d: def.descr,
               ub: request.session.usrid,
