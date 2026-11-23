@@ -25,6 +25,9 @@ storage/
 logs/
 *.log
 weighbridge-buffer.sqlite*
+agent-store.sqlite*
+apps/weighbridge-agent/agent.config.json
+*.secret
 
 # local business data (real customer names) and DB run logs
 db/reports/*.csv

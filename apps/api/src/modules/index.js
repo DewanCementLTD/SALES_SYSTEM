@@ -15,6 +15,7 @@ import notificationRoutes from './notifications/routes.js';
 import ocRoutes from './oc/routes.js';
 import outboxRoutes from './outbox/routes.js';
 import permitRoutes from './permits/routes.js';
+import plantRoutes from './plant/routes.js';
 import pricingRoutes from './pricing/routes.js';
 import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
@@ -48,4 +49,5 @@ export async function registerModules(app) {
   await app.register(cancellationRoutes, { prefix: '/api/v1' });
   await app.register(textRoutes, { prefix: '/api/v1' });
   await app.register(deviceRoutes, { prefix: '/api/v1' });
+  await app.register(plantRoutes, { prefix: '/api/v1' });
 }

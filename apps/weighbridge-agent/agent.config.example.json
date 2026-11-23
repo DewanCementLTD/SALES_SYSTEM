@@ -1,0 +1,10 @@
+{
+  "apiUrl": "https://sales.example.local",
+  "deviceId": "KHI-WB-01",
+  "secretFile": "device.secret",
+  "wsPort": 7071,
+  "allowedOrigins": ["https://sales.example.local"],
+  "storePath": "agent-store.sqlite",
+  "logFile": "logs/agent.log",
+  "retryMs": 10000
+}
