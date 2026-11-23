@@ -48,3 +48,19 @@ test('P2-09: admin message templates and print texts list the seeded rows', asyn
   await page.goto('/admin/print-texts');
   await expect(page.getByRole('heading', { level: 1, name: 'Print texts' })).toBeVisible();
 });
+
+test('P2-06: DO adjustment advices list the legacy advice; status tabs filter', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto('/delivery/adjustment');
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'DO adjustment advices' }),
+  ).toBeVisible();
+  // legacy Karachi advice 2160373: DO 22722000041, −70 t / −1,764,000
+  await expect(page.getByRole('cell', { name: '2160373' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: /− 70/ })).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/30-do-adjustments.png` });
+  await page.getByRole('tab', { name: 'Waiting for approval' }).click();
+  await expect(page).toHaveURL(/status=PENDING_APPROVAL/);
+});

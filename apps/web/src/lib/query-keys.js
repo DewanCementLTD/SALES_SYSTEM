@@ -33,6 +33,7 @@ export const qk = {
   permits: (params) => ['permits', 'list', params],
   permit: (brnch, no) => ['permits', 'detail', Number(brnch), String(no)],
   do: (brnch, type, no) => ['do', 'detail', Number(brnch), type, String(no)],
+  doAdjustments: (params) => ['do-adjustments', params],
   oc: (brnch, no) => ['oc', 'detail', Number(brnch), String(no)],
   ocBalance: (brnch, no, ver) => ['customers', 'balance', 'oc', Number(brnch), String(no), ver],
 };

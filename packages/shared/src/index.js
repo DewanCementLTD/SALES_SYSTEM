@@ -20,3 +20,4 @@ export * from './srf.js';
 export * from './oc.js';
 export * from './brv.js';
 export * from './permit.js';
+export * from './do.js';

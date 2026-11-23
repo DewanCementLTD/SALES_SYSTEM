@@ -63,8 +63,8 @@ test('P1-01: products & periods are read-only and show the effective-period note
 
 test('screens of later phases still show the planned screen', async ({ page }) => {
   await login(page);
-  await page.goto('/delivery/adjustment');
-  await expect(page.getByText(/Planned for P2/)).toBeVisible();
+  await page.goto('/admin/devices');
+  await expect(page.getByText(/Planned for P3/)).toBeVisible();
 });
 
 test('P1-02: geography — browse the hierarchy, add a zone, review legacy codes', async ({

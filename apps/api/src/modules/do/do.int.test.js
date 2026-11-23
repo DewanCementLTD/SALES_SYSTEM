@@ -162,3 +162,115 @@ describe('re-pricing (P2-07)', () => {
     expect(d).toMatchObject({ status: 'ON_HOLD', holdShortfall: '25000.00' });
   });
 });
+
+describe('DO quantity adjustment advice (BR-DO-06)', () => {
+  it('advice → DO_ADJUST approval → DO, value, bags, QR version and DO ledger change', async () => {
+    await seedDo(); // 35 t, 10 t dispatched, 24,400/t
+    const fin = await as({ 1: ['FINANCE'] });
+    const fm = await as({ 1: ['FINANCE_MANAGER'] });
+    const base = `/api/v1/do/1/OS/${DO_NO}`;
+    let d = (await fin.get(base)).json();
+
+    // BR-DO-04: never below what was dispatched
+    let r = await fin.post(
+      `${base}/adjust`,
+      { qtyTon: '5', reason: 'Customer reduced the order' },
+      { headers: ifm(d.rowVer) },
+    );
+    expect(r.statusCode).toBe(422);
+    expect(r.json().ruleId).toBe('BR-DO-04');
+    // an increase needs the available balance (BR-BAL-03 shortfall)
+    r = await fin.post(
+      `${base}/adjust`,
+      { qtyTon: '100000', reason: 'Customer wants much more cement' },
+      { headers: ifm(d.rowVer) },
+    );
+    expect(r.statusCode).toBe(422);
+    expect(r.json()).toMatchObject({
+      ruleId: 'BR-BAL-03',
+      data: { shortfall: expect.any(String) },
+    });
+
+    // reduction 35 → 30 t: advice pending, DO unchanged until approved
+    r = await fin.post(
+      `${base}/adjust`,
+      { qtyTon: '30', reason: 'Customer reduced the order by 5 t' },
+      { headers: ifm(d.rowVer) },
+    );
+    expect(r.statusCode, r.body).toBe(200);
+    const { advice, requestId } = r.json();
+    expect(advice).toMatchObject({
+      status: 'PENDING_APPROVAL',
+      deltaTon: '-5.000',
+      deltaValue: '-122000.00',
+      doNo: DO_NO,
+      reason: 'Customer reduced the order by 5 t',
+    });
+    expect(requestId).toEqual(expect.any(Number));
+    expect(r.json().do.qtyTon).toBe('35.000');
+    // one pending advice per DO
+    r = await fin.post(
+      `${base}/adjust`,
+      { qtyTon: '32', reason: 'Another change of quantity' },
+      { headers: ifm(d.rowVer) },
+    );
+    expect(r.statusCode).toBe(409);
+
+    const ok = await fm.post(`/api/v1/approvals/${requestId}/approve`, {});
+    expect(ok.statusCode, ok.body).toBe(200);
+    d = (await fin.get(base)).json();
+    expect(d).toMatchObject({
+      qtyTon: '30.000',
+      value: '732000.00',
+      bags: 600,
+      qrVer: 2, // BR-QR-03: the old print is no longer valid
+      status: 'ISSUED',
+    });
+    expect(await doLedger()).toBe('732000.00'); // Cr 122,000 (DOA)
+
+    // rejected advice leaves the DO as it is
+    r = await fin.post(
+      `${base}/adjust`,
+      { qtyTon: '20', reason: 'Customer may reduce again' },
+      { headers: ifm(d.rowVer) },
+    );
+    expect(r.statusCode, r.body).toBe(200);
+    const rej = await fm.post(`/api/v1/approvals/${r.json().requestId}/reject`, {
+      comment: 'Customer confirmed 30 t by phone',
+    });
+    expect(rej.statusCode, rej.body).toBe(200);
+    expect((await fin.get(base)).json().qtyTon).toBe('30.000');
+
+    const list = (await fin.get(`/api/v1/do-adjustments?doNo=${DO_NO}`)).json();
+    expect(list.items.map((a) => [a.status, a.deltaTon])).toEqual([
+      ['REJECTED', '-10.000'],
+      ['APPROVED', '-5.000'],
+    ]);
+    expect(list.items[1].authorisedBy).toBeTruthy();
+    expect((await fin.get('/api/v1/do-adjustments?brnch=2')).statusCode).toBe(403);
+  });
+});
+
+describe('DO adjustment without an active DO_ADJUST rule', () => {
+  it('BR-DO-06: the advice is applied at once and recorded as approved', async () => {
+    await seedDo();
+    await t.db.withTx((tx) =>
+      tx.exec("UPDATE APPROVAL_RULE SET ACTIVE = 'N' WHERE DOC_TYPE = 'DO_ADJUST'"),
+    );
+    const fin = await as({ 1: ['FINANCE'] });
+    const base = `/api/v1/do/1/OS/${DO_NO}`;
+    const d = (await fin.get(base)).json();
+    const r = await fin.post(
+      `${base}/adjust`,
+      { qtyTon: '34', reason: 'One tonne short in the order' },
+      { headers: ifm(d.rowVer) },
+    );
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({
+      requestId: null,
+      advice: { status: 'APPROVED', deltaValue: '-24400.00' },
+      do: { qtyTon: '34.000', value: '829600.00' },
+    });
+    expect(await doLedger()).toBe('829600.00');
+  });
+});

@@ -186,6 +186,7 @@ export const APPROVAL_DOC_TYPES = Object.freeze([
   'PERMIT_CFO',
   'PERMIT_BALANCE_OVERRIDE',
   'DO_CANCEL',
+  'DO_ADJUST',
   'WEIGHT_OVERRIDE',
   'DC_CANCEL',
   'NOTE_POST',

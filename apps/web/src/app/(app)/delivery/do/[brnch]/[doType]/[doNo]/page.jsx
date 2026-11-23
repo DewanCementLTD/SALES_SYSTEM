@@ -1,15 +1,17 @@
 'use client';
 
 // DO detail (PRD 4.8): print (signed QR, barcode, watermark), send to dealer, hold/release, cancel
-// (DO_CANCEL approval when active; the undispatched value returns to the balance, BR-DO-05).
+// (DO_CANCEL approval when active; the undispatched value returns to the balance, BR-DO-05),
+// quantity adjustment advice (DO_ADJUST approval, BR-DO-06).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Pause, Play, Printer, Send, Truck, XCircle } from 'lucide-react';
+import { Loader2, Pause, Play, Printer, Scale, Send, Truck, XCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { ReasonDialog } from '@/components/common/dialogs';
 import { PageHeader, ProblemAlert, Section, StatusBadge } from '@/components/common/page';
+import { AdjustDialog } from '@/components/delivery/adjust-dialog';
 import { DO_TONE } from '@/components/delivery/do-list';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
@@ -178,6 +180,11 @@ export default function DoDetailPage() {
                     <Play className="size-4" /> Release
                   </Button>
                 )}
+                {mine && open && d.rate && s.can('do.adjust') && (
+                  <Button variant="outline" onClick={() => setDialog('adjust')}>
+                    <Scale className="size-4" /> Adjust quantity
+                  </Button>
+                )}
                 {mine && open && s.can('do.cancel') && (
                   <Button
                     variant="ghost"
@@ -192,6 +199,22 @@ export default function DoDetailPage() {
           </aside>
         </div>
       )}
+      <AdjustDialog
+        open={dialog === 'adjust'}
+        onOpenChange={(o) => setDialog(o ? 'adjust' : null)}
+        d={d}
+        onConfirm={(body) =>
+          run('adjust', async () => {
+            const r = await post('adjust', body);
+            toast.success(
+              r.requestId
+                ? `Advice ${r.advice.adviceNo} sent for approval (request #${r.requestId})`
+                : `Advice ${r.advice.adviceNo}: DO adjusted to ${fmtQty(r.do.qtyTon)} t`,
+            );
+            qc.invalidateQueries({ queryKey: ['do-adjustments'] });
+          })
+        }
+      />
       <ReasonDialog
         open={dialog === 'hold'}
         onOpenChange={(o) => setDialog(o ? 'hold' : null)}

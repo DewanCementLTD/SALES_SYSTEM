@@ -1,9 +1,10 @@
 // /api/v1/do/* (API_SPEC §10, TASKS P2-06). Commands carry If-Match with the row version.
-import { DO_STATUS, P, zBrnch, zIsoDate, zPageQuery, zReason } from '@dcl/shared';
+import { DO_STATUS, P, zBrnch, zDoAdjust, zIsoDate, zPageQuery, zReason } from '@dcl/shared';
 import { z } from 'zod';
 import { resolveListBranches } from '../../lib/branch-scope.js';
 import { etag, ifMatch } from '../../lib/http.js';
 import { enqueue } from '../outbox/service.js';
+import * as adjust from './adjust.js';
 import * as reprice from './reprice.js';
 import * as svc from './service.js';
 
@@ -149,6 +150,76 @@ export default async function doRoutes(app) {
     (tx, a, b, t, n, r) => svc.cancelDo(tx, a, b, t, n, ifMatch(r), r.body.reason),
     z.object({ do: zDo, requestId: z.number().nullable(), released: zN }),
   );
+  const zAdvice = z.object({
+    brnch: z.number(),
+    year: z.number(),
+    adviceNo: z.string(),
+    adviceDate: zN,
+    customerCode: z.string(),
+    customerName: zN,
+    doType: zN,
+    doNo: zN,
+    ocNo: zN,
+    deltaTon: z.string(),
+    deltaValue: z.string(),
+    status: z.string(),
+    authorisedBy: zN,
+    createdBy: zN,
+    createdOn: z.date().nullable(),
+    reason: zN,
+    rowVer: z.number(),
+  });
+  command(
+    'adjust',
+    P.do.adjust,
+    zDoAdjust,
+    'Quantity adjustment advice (BR-DO-06): DO_ADJUSTMENT row → DO_ADJUST approval; applied when approved (DO ledger Dr/Cr difference)',
+    (tx, a, b, t, n, r) => adjust.requestAdjust(tx, a, b, t, n, ifMatch(r), r.body),
+    z.object({ advice: zAdvice, requestId: z.number().nullable(), do: zDo }),
+  );
+
+  app.get(
+    '/do-adjustments',
+    {
+      config: { permission: P.do.view },
+      schema: {
+        tags,
+        summary: 'DO quantity adjustment advices of my branches (BR-DO-06)',
+        querystring: zPageQuery.extend({
+          brnch: z.union([z.literal('all'), z.coerce.number().int()]).optional(),
+          status: z.enum(['PENDING_APPROVAL', 'APPROVED', 'REJECTED']).optional(),
+          doNo: z
+            .string()
+            .regex(/^\d{1,11}$/)
+            .optional(),
+          customer: z.string().max(11).optional(),
+        }),
+        response: {
+          200: z.object({
+            items: z.array(zAdvice),
+            page: z.number(),
+            pageSize: z.number(),
+            total: z.number(),
+          }),
+        },
+      },
+    },
+    async (request) => {
+      const { brnch, ...rest } = request.query;
+      const branches = resolveListBranches(
+        {
+          brnch: request.session.brnch,
+          allowedBranches: await request.authz.branchesWith(P.do.view),
+        },
+        brnch,
+      );
+      return app.db.read(
+        (tx) => adjust.listAdvices(tx, { branches, ...rest }),
+        request.txOpts('do.adjustments'),
+      );
+    },
+  );
+
   command(
     'hold',
     P.do.hold_release,

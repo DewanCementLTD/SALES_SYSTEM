@@ -88,7 +88,7 @@ test('planned screens show their phase; command palette navigates', async ({ pag
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/orders\/oc$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Order confirmations' })).toBeVisible();
-  await page.goto('/delivery/adjustment');
-  await expect(page.getByText('Planned for P2')).toBeVisible();
+  await page.goto('/admin/devices');
+  await expect(page.getByText('Planned for P3')).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/03-planned-screen.png` });
 });

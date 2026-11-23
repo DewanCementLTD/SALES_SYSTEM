@@ -136,7 +136,13 @@ export const NAV = [
         phase: 'P2',
         built: true,
       },
-      { label: 'DO adjustment', href: '/delivery/adjustment', perm: ['do.adjust'], phase: 'P2' },
+      {
+        label: 'DO adjustment',
+        href: '/delivery/adjustment',
+        perm: ['do.adjust'],
+        phase: 'P2',
+        built: true,
+      },
     ],
   },
   {

@@ -87,6 +87,8 @@ export const DEFAULT_APPROVAL_RULES = [
     role: 'CFO',
   },
   { docType: 'DO_CANCEL', name: 'DO cancel after partial dispatch', role: 'FINANCE_MANAGER' },
+  // BR-DO-06: approver is a default to confirm (same as DO_CANCEL)
+  { docType: 'DO_ADJUST', name: 'DO quantity adjustment advice', role: 'FINANCE_MANAGER' },
   { docType: 'WEIGHT_OVERRIDE', name: 'Weight variance outside tolerance', role: 'PLANT_MANAGER' },
   { docType: 'DC_CANCEL', name: 'DC cancel after invoice (pre-FBR)', role: 'FINANCE_MANAGER' },
   { docType: 'NOTE_POST', name: 'Credit / debit note posting', role: 'FINANCE_MANAGER' },
