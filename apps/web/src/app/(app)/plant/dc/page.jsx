@@ -2,12 +2,15 @@
 
 // Plant › Delivery challans (PRD 4.9, TASKS P3-06/07): one row per DC line = invoice, with its tax
 // figures and FBR state. FBR rejections show FBR's text (BR-FBR-04); after a correction Finance
-// sends the invoice again (invoice.fbr_retry).
+// sends the invoice again (invoice.fbr_retry). Before FBR a DC can be cancelled (dc.cancel +
+// approval DC_CANCEL, BR-DC-CXL-02).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileText, RotateCcw } from 'lucide-react';
+import { FileText, RotateCcw, XCircle } from 'lucide-react';
+import { useState } from 'react';
 import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
+import { ReasonDialog } from '@/components/common/dialogs';
 import { PageHeader, ProblemAlert, Section, StatusBadge } from '@/components/common/page';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -33,6 +36,7 @@ const LABEL = {
 export default function DcInvoicesPage() {
   const s = useSession();
   const qc = useQueryClient();
+  const [cancelDc, setCancelDc] = useState(null);
   const [f, setF] = useQueryStates({
     status: parseAsString.withDefault('all'),
     page: parseAsInteger.withDefault(1),
@@ -121,13 +125,28 @@ export default function DcInvoicesPage() {
     {
       id: 'x',
       header: '',
-      cell: ({ row }) =>
-        ['FBR_REJECTED', 'FBR_PENDING'].includes(row.original.status) &&
-        s.can('invoice.fbr_retry') ? (
-          <Button size="sm" variant="outline" onClick={() => retry(row.original)}>
-            <RotateCcw className="size-4" /> Send again
-          </Button>
-        ) : null,
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-1">
+          {['FBR_REJECTED', 'FBR_PENDING'].includes(row.original.status) &&
+            s.can('invoice.fbr_retry') && (
+              <Button size="sm" variant="outline" onClick={() => retry(row.original)}>
+                <RotateCcw className="size-4" /> Send again
+              </Button>
+            )}
+          {['FINAL', 'FBR_PENDING', 'FBR_REJECTED'].includes(row.original.status) &&
+            !row.original.fbrInvoiceNo &&
+            s.can('dc.cancel') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-danger"
+                onClick={() => setCancelDc(row.original)}
+              >
+                <XCircle className="size-4" /> Cancel DC
+              </Button>
+            )}
+        </div>
+      ),
     },
   ];
   return (
@@ -157,6 +176,28 @@ export default function DcInvoicesPage() {
           empty="No invoices yet."
         />
       </Section>
+      <ReasonDialog
+        open={!!cancelDc}
+        onOpenChange={(o) => !o && setCancelDc(null)}
+        title={cancelDc ? 'Cancel DC ' + cancelDc.dcType + ' ' + cancelDc.dcNo : ''}
+        description="Before FBR only (BR-DC-CXL-02): all invoices of the DC are cancelled, the ledger is reversed and the DO quantity comes back. The Finance Manager approves."
+        confirmLabel="Send for approval"
+        destructive
+        onConfirm={async (reason) => {
+          const r = await api(
+            '/plant/dc/' + cancelDc.brnch + '/' + cancelDc.dcType + '/' + cancelDc.dcNo + '/cancel',
+            {
+              method: 'POST',
+              headers: { 'idempotency-key': crypto.randomUUID() },
+              body: { reason },
+            },
+          );
+          toast.success(
+            r.requestId ? 'Sent for approval (request #' + r.requestId + ')' : 'DC cancelled',
+          );
+          qc.invalidateQueries({ queryKey: ['invoices'] });
+        }}
+      />
     </>
   );
 }

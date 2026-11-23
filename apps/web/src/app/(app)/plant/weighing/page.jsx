@@ -5,7 +5,7 @@
 // tolerance; re-weigh or ask for an override when blocked (BR-WGT-01…06). Manual weight only with
 // weigh.manual and a reason.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Pencil, RefreshCw, Scale, ShieldAlert } from 'lucide-react';
+import { Ban, Loader2, Pencil, RefreshCw, Scale, ShieldAlert } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { ReasonDialog } from '@/components/common/dialogs';
@@ -42,6 +42,7 @@ export default function WeighingPage() {
   const [manualKg, setManualKg] = useState('');
   const [manualReason, setManualReason] = useState('');
   const [override, setOverride] = useState(false);
+  const [abortOpen, setAbortOpen] = useState(false);
   const board = useQuery({
     queryKey: ['plant', 'board'],
     queryFn: () => api('/plant/board'),
@@ -307,6 +308,19 @@ export default function WeighingPage() {
                       invoices
                     </Button>
                   )}
+                {['IN', 'TARE_DONE', 'GROSS_DONE', 'VARIANCE_BLOCKED', 'OVERRIDDEN'].includes(
+                  g.status,
+                ) &&
+                  !g.lines?.some((l) => l.invoiceId) &&
+                  s.can('gate.abort') && (
+                    <Button
+                      variant="ghost"
+                      className="text-danger"
+                      onClick={() => setAbortOpen(true)}
+                    >
+                      <Ban className="size-4" /> Abort (not loaded)
+                    </Button>
+                  )}
                 {g.status === 'VARIANCE_BLOCKED' && s.can('weigh.override') && (
                   <Button
                     variant="outline"
@@ -363,6 +377,19 @@ export default function WeighingPage() {
           </form>
         </DialogContent>
       </Dialog>
+      <ReasonDialog
+        open={abortOpen}
+        onOpenChange={setAbortOpen}
+        title={`Abort gate pass ${gpId}`}
+        description="The truck leaves without cement. The DC is cancelled (its number stays used); nothing is invoiced."
+        confirmLabel="Abort"
+        destructive
+        onConfirm={async (reason) => {
+          await send('abort', { reason });
+          toast.success('Gate pass aborted');
+          setGpId(null);
+        }}
+      />
       <ReasonDialog
         open={override}
         onOpenChange={setOverride}

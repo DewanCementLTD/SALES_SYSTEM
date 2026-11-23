@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Errors } from '../../lib/errors.js';
 import { SettingsReader } from '../settings/service.js';
 import { receiveReading } from './readings.js';
+import * as cancel from './cancel.js';
 import * as exit from './exit.js';
 import * as gate from './gate.js';
 import * as invoice from './invoice.js';
@@ -523,5 +524,41 @@ export default async function plantRoutes(app) {
     'Exit while FBR is pending (only when ALLOW_EXIT_WITHOUT_FBR = Y) → approval EXIT_WITHOUT_FBR',
     (tx, a, id, b) => exit.requestExitOverride(tx, a, id, b.reason),
     z.object({ gatePass: zGatePassFull, requestId: z.number() }),
+  );
+
+  // ---- abort / DC cancel (P3-09) ----
+  plantCommand(
+    'abort',
+    P.gate.abort,
+    z.object({ reason: zReason }),
+    'Truck not loaded: gate pass ABORTED, DC cancelled (number stays used), nothing posted (BR-DC-CXL-01)',
+    (tx, a, id, b) => cancel.abort(tx, a, id, b.reason),
+    zGatePassFull,
+  );
+
+  app.post(
+    '/plant/dc/:brnch/:dcType/:dcNo/cancel',
+    {
+      config: { permission: P.dc.cancel, idempotency: 'required' },
+      schema: {
+        tags,
+        summary:
+          'Cancel an invoiced DC before FBR (approval DC_CANCEL, BR-DC-CXL-02); after an FBR number → 422, credit note (BR-DC-CXL-03)',
+        params: z.object({
+          brnch: z.coerce.number().int(),
+          dcType: z.string().regex(/^[A-Z0-9]{1,10}$/),
+          dcNo: z.coerce.number().int().positive(),
+        }),
+        body: z.object({ reason: zReason }),
+        response: {
+          200: z.object({ gatePass: zGatePassFull, requestId: z.number().nullable() }),
+        },
+      },
+    },
+    async (request) =>
+      app.db.withTx(
+        (tx) => cancel.requestDcCancel(tx, actor(request), request.params, request.body.reason),
+        request.txOpts('plant.dc-cancel'),
+      ),
   );
 }
