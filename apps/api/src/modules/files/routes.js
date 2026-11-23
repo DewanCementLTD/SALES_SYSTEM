@@ -78,6 +78,60 @@ export default async function fileRoutes(app) {
     },
   );
 
+  app.get(
+    '/files',
+    {
+      schema: {
+        tags: ['files'],
+        summary:
+          'Stored files of a document (newest first), e.g. prints queued by …/contract-review',
+        querystring: z.object({
+          entity: z.enum(/** @type {[string, ...string[]]} */ (Object.keys(FILE_PERMISSION))),
+          key: z.string().regex(/^[12]\|[\w./-]{1,60}$/, 'key = {brnch}|{document no}'),
+        }),
+        response: {
+          200: z.object({
+            items: z.array(
+              z.object({
+                attId: z.number(),
+                fileName: z.string(),
+                sizeBytes: z.number(),
+                uploadedOn: z.date(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    async (request) => {
+      const { entity, key } = request.query;
+      const brnch = Number(key.split('|')[0]);
+      if (!(await request.authz.allowedBranches()).includes(brnch))
+        throw Errors.branchForbidden(brnch);
+      const perm = FILE_PERMISSION[entity];
+      if (!(await request.authz.permissions(brnch)).has(perm))
+        throw Errors.forbidden(`You need ${perm} to see these files`);
+      const rows = await app.db.read(
+        (tx) =>
+          tx.many(
+            `SELECT ATT_ID, FILE_NAME, SIZE_BYTES, UPLOADED_ON FROM ATTACHMENT
+              WHERE BRNCH = :b AND ENTITY = :e AND ENTITY_KEY = :k ORDER BY ATT_ID DESC`,
+            { b: brnch, e: entity, k: key },
+            { maxRows: 50 },
+          ),
+        request.txOpts('files.list'),
+      );
+      return {
+        items: rows.map((r) => ({
+          attId: Number(r.ATT_ID),
+          fileName: r.FILE_NAME,
+          sizeBytes: Number(r.SIZE_BYTES),
+          uploadedOn: r.UPLOADED_ON,
+        })),
+      };
+    },
+  );
+
   app.post(
     '/admin/pdf-test',
     {

@@ -157,15 +157,19 @@ P1-03 implementation notes:
 
 ## 6. SRF
 
-| Method | Path                                       | Permission   | Notes                                          |
-| ------ | ------------------------------------------ | ------------ | ---------------------------------------------- |
-| GET    | `/srf?brnch=&status=&customer=&from=&to=`  | `srf.view`   |                                                |
-| GET    | `/srf/{brnch}/{srfNo}`                     | `srf.view`   |                                                |
-| POST   | `/srf`                                     | `srf.create` | DRAFT                                          |
-| PUT    | `/srf/{brnch}/{srfNo}`                     | `srf.update` | DRAFT only                                     |
-| POST   | `/srf/{brnch}/{srfNo}/submit`              | `srf.create` | Creates draft OC → `{ srf, ocNo }` (BR-SRF-05) |
-| POST   | `/srf/{brnch}/{srfNo}/cancel`              | `srf.cancel` | Reason; cancels draft OC                       |
-| GET    | `/srf/{brnch}/{srfNo}/contract-review.pdf` | `srf.print`  |                                                |
+| Method | Path                                      | Permission   | Notes                                                                                                                                                      |
+| ------ | ----------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/srf?brnch=&status=&customer=&from=&to=` | `srf.view`   |                                                                                                                                                            |
+| GET    | `/srf/{brnch}/{srfNo}`                    | `srf.view`   |                                                                                                                                                            |
+| POST   | `/srf`                                    | `srf.create` | DRAFT                                                                                                                                                      |
+| PUT    | `/srf/{brnch}/{srfNo}`                    | `srf.update` | DRAFT only                                                                                                                                                 |
+| POST   | `/srf/{brnch}/{srfNo}/submit`             | `srf.create` | Creates draft OC → `{ srf, ocNo }` (BR-SRF-05)                                                                                                             |
+| POST   | `/srf/{brnch}/{srfNo}/cancel`             | `srf.cancel` | Reason; cancels draft OC                                                                                                                                   |
+| POST   | `/srf/{brnch}/{srfNo}/contract-review`    | `srf.print`  | Queues the Contract Review Form PDF (worker) → 202 `{ outboxId, entityKey }`; the file then appears in `GET /files?entity=SALES_REQUEST_MASTER&key={brnch} | {srfNo}` |
+
+Built 23 Nov 2026. `PUT`, `submit` and `cancel` need `If-Match` (ETag from GET). Create body = the body below + `destGeoCode` (destination city, required: the draft OC takes the trade price of customer + product + this city on the submit date; no trade price → OC built with zero prices, BR-OC-02 override). `qtyTon` and schedule quantities have up to 2 decimals (legacy NUMBER(8,2)). `taxProfile` fields and `doHandoverTo` default from the customer when left empty (BR-SRF-04). Response = SRF with `srfNo` (string), `status`, `rowVer`, `contractValidTo` (BR-SRF-07), `ocNo`, `schedule`. Submit → `{ srf, oc: { ocNo, priced, priceCode, value } }`. Legacy SRFs without DOC_STATUS read as CONVERTED (an OC exists) or SUBMITTED.
+
+`GET /files?entity=&key={brnch}|{no}` (print permission of the entity) lists a document's stored files `{ items: [{ attId, fileName, sizeBytes, uploadedOn }] }`; download with `GET /files/{attId}`.
 
 SRF body (create):
 

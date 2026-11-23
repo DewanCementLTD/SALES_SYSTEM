@@ -1,0 +1,75 @@
+// Order Confirmation pricing (BUSINESS_RULES §4, REQUIREMENTS_SPEC 6.1, TASKS P2-02/P2-03).
+// Legacy OCs copy the trade price: consumer price = TRADE_PRICE.INVOICE_PRICE, retail price /
+// sales tax / FED from the same row; net price = consumer price − expenses − discount;
+// OC value = net price × tons (BR-OC-03).
+import { z } from 'zod';
+import { dec, roundMoney } from './money.js';
+
+/** Editable price fields of an OC, in breakdown order (BR-OC-03). */
+export const OC_PRICE_FIELDS = Object.freeze([
+  'retailPrice',
+  'tradeDisc',
+  'salesTax',
+  'fed',
+  'consPrice',
+  'expense',
+  'discount',
+]);
+
+export const OC_PRICE_LABELS = Object.freeze({
+  retailPrice: 'Retail price',
+  tradeDisc: 'Trade discount',
+  tradeDiscPrice: 'Trade-discount price',
+  salesTax: 'Sales tax',
+  fed: 'FED',
+  consPrice: 'Consumer price',
+  expense: 'Less expenses',
+  discount: 'Less discount',
+  netPrice: 'Net price',
+});
+
+const m2 = (v) => roundMoney(v ?? 0).toFixed(2);
+
+/**
+ * BR-OC-01: master prices of a draft OC from the effective trade price (null = no trade price;
+ * the OC is built with zero prices and every entered price is an override).
+ * @param {{ priceCode: string, retailPrice: any, salesTaxAmt: any, fedPerTon: any, invoicePrice: any } | null} tp
+ */
+export function masterPricesFrom(tp) {
+  if (!tp) return null;
+  return {
+    priceCode: tp.priceCode,
+    retailPrice: m2(tp.retailPrice),
+    tradeDisc: '0.00',
+    salesTax: m2(tp.salesTaxAmt),
+    fed: m2(tp.fedPerTon),
+    consPrice: m2(tp.invoicePrice),
+    expense: '0.00',
+    discount: '0.00',
+  };
+}
+
+/** BR-OC-03 breakdown + value for prices and a quantity. */
+export function ocBreakdown(prices, qtyTon) {
+  const p = Object.fromEntries(OC_PRICE_FIELDS.map((k) => [k, dec(prices?.[k] ?? 0)]));
+  const netPrice = p.consPrice.minus(p.expense).minus(p.discount);
+  return {
+    ...Object.fromEntries(OC_PRICE_FIELDS.map((k) => [k, p[k].toFixed(2)])),
+    tradeDiscPrice: p.retailPrice.minus(p.tradeDisc).toFixed(2),
+    netPrice: netPrice.toFixed(2),
+    value: roundMoney(netPrice.times(dec(qtyTon ?? 0))).toFixed(2),
+  };
+}
+
+/** BR-OC-02: price fields that differ from the master values (empty = no override). */
+export function overriddenFields(master, prices) {
+  if (!master) return OC_PRICE_FIELDS.filter((k) => dec(prices?.[k] ?? 0).gt(0));
+  return OC_PRICE_FIELDS.filter((k) => !dec(prices?.[k] ?? 0).eq(dec(master[k] ?? 0)));
+}
+
+const zPrice = z
+  .string()
+  .trim()
+  .regex(/^\d{1,10}(\.\d{1,2})?$/, 'Price: a number with up to 2 decimals');
+
+export const zOcPrices = z.object(Object.fromEntries(OC_PRICE_FIELDS.map((k) => [k, zPrice])));

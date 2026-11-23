@@ -42,3 +42,38 @@ describe('print templates (P0-15)', () => {
     );
   });
 });
+
+describe('Contract Review Form (BR-SRF-07)', () => {
+  const srf = {
+    srfNo: '66461227',
+    srfDate: '2026-10-22',
+    contractValidTo: '2027-01-22',
+    customerCode: '1210-21-001',
+    customerName: 'AITMAAD BUILDERS & DEVELOPERS',
+    productCode: 'OPS',
+    qtyTon: '40.00',
+    bags: 800,
+    modeOfDelivery: 'BAGS',
+    status: 'SUBMITTED',
+  };
+  it('shows parties, validity, order and only the clause texts that are set up', async () => {
+    const out = await renderTemplate(
+      'contract-review',
+      {
+        brnch: 2,
+        srf,
+        customer: { mobile: '03001234567' },
+        clauses: { CRF_VALIDITY: ['Valid until {validTo}.'] },
+        preparedBy: 'MKT01',
+      },
+      { runAt, qrSecret },
+    );
+    expect(out.html).toContain('Dewan Cement Limited and 1210-21-001');
+    expect(out.html).toContain('AITMAAD BUILDERS &amp; DEVELOPERS');
+    expect(out.html).toContain('22-10-2026 to 22-01-2027');
+    expect(out.html).toContain('Valid until 22-01-2027.');
+    expect(out.html).toContain('Clause text not set up');
+    expect(out.html).toContain('DCL/MKT/FM/003');
+    expect(out.html).not.toContain('class="watermark"');
+  });
+});

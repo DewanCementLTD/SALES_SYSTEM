@@ -3,11 +3,13 @@
 import { signQr } from '@dcl/shared';
 import { barcodeSvg, qrSvg } from './codes.js';
 import { html, raw } from './html.js';
+import contractReview from './contract-review.js';
 import { footerTemplate, page } from './letterhead.js';
 
 export { html, raw, escapeHtml } from './html.js';
 export { page, footerTemplate, BASE_CSS } from './letterhead.js';
 export { qrSvg, barcodeSvg } from './codes.js';
+export { CRF_CLAUSES } from './contract-review.js';
 
 /**
  * Layout check page: letterhead, a table, a signed QR and a barcode (used by the PDF self-test
@@ -63,7 +65,7 @@ async function sample(data, { runAt, qrSecret }) {
   };
 }
 
-export const TEMPLATES = { sample };
+export const TEMPLATES = { sample, 'contract-review': contractReview };
 
 /** Render a registered template to HTML. */
 export async function renderTemplate(name, data, opts) {

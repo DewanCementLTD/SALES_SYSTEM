@@ -12,6 +12,7 @@ import outboxRoutes from './outbox/routes.js';
 import pricingRoutes from './pricing/routes.js';
 import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
+import srfRoutes from './srf/routes.js';
 import taxRoutes from './tax/routes.js';
 import userRoutes from './users/routes.js';
 
@@ -32,4 +33,5 @@ export async function registerModules(app) {
   await app.register(taxRoutes, { prefix: '/api/v1' });
   await app.register(pricingRoutes, { prefix: '/api/v1' });
   await app.register(ledgerRoutes, { prefix: '/api/v1' });
+  await app.register(srfRoutes, { prefix: '/api/v1' });
 }

@@ -25,6 +25,7 @@ const zTp = z.object({
   customerName: zM,
   productCode: zM,
   geoCode: zM,
+  geoName: zM,
   efDate: zM,
   invoicePrice: zM,
   retailPrice: zM,

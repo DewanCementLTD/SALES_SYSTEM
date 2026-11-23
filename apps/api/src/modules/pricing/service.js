@@ -23,8 +23,10 @@ const money = (v) => (v === null || v === undefined ? null : dec(v).toFixed(2));
 const LIVE = `NVL(t.DOC_STATUS, 'APPROVED') = 'APPROVED' AND NVL(t.ACTIVE, 'Y') = 'Y'`;
 const COLS = `t.BRNCH, t.AREA_CODE, t.AREA_DESC, t.PRODUCT_CODE, t.CUSTOMER_CODE, t.GEO_CODE, t.EF_DATE, t.INVOICE_PRICE,
   t.TRADE_DISC, t.RETAIL_PRICE, t.SALES_TAX_PERCENT, t.SALES_TAX_AMT, t.CED, t.COMPANY_PRICE, t.TARGET, t.ACTIVE,
-  t.DOC_STATUS, t.CREATED_BY, t.ENTER_BY, t.APPROVED_BY, t.APPROVED_ON, c.CUSTOMER_NAME`;
-const JOIN = `LEFT JOIN CUSTOMER_INFO c ON c.BRNCH = t.BRNCH AND c.CUSTOMER_CODE = t.CUSTOMER_CODE`;
+  t.DOC_STATUS, t.CREATED_BY, t.ENTER_BY, t.APPROVED_BY, t.APPROVED_ON, c.CUSTOMER_NAME,
+  NVL(gh.CITY_NAME, NVL(gh.AREA_NAME, gh.TERRITORY_NAME)) AS GEO_NAME`;
+const JOIN = `LEFT JOIN CUSTOMER_INFO c ON c.BRNCH = t.BRNCH AND c.CUSTOMER_CODE = t.CUSTOMER_CODE
+  LEFT JOIN GEO_HIERARCHY gh ON gh.BRNCH = t.BRNCH AND gh.GEO_CODE = t.GEO_CODE`;
 
 function mapTp(r) {
   return {
@@ -35,6 +37,7 @@ function mapTp(r) {
     customerName: r.CUSTOMER_NAME ?? null,
     productCode: r.PRODUCT_CODE ?? null,
     geoCode: r.GEO_CODE ?? null,
+    geoName: r.GEO_NAME ?? null,
     efDate: r.EF_DATE ? businessDate(r.EF_DATE) : null,
     invoicePrice: money(r.INVOICE_PRICE ?? r.TRADE_DISC),
     retailPrice: money(r.RETAIL_PRICE),

@@ -36,7 +36,7 @@ export const NAV = [
     label: 'Orders',
     icon: FileText,
     items: [
-      { label: 'SRF', href: '/orders/srf', perm: ['srf.view'], phase: 'P2' },
+      { label: 'SRF', href: '/orders/srf', perm: ['srf.view'], phase: 'P2', built: true },
       { label: 'Order confirmation', href: '/orders/oc', perm: ['oc.view'], phase: 'P2' },
       { label: 'Re-pricing', href: '/orders/repricing', perm: ['do.reprice'], phase: 'P2' },
       {

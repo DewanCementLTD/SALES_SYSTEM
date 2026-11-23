@@ -23,4 +23,6 @@ export const qk = {
   customer: (brnch, code) => ['customers', 'detail', brnch, code],
   customerBalance: (brnch, code) => ['customers', 'balance', Number(brnch), code],
   ledger: (brnch, code, params) => ['ledger', Number(brnch), code, params],
+  srfs: (params) => ['srf', 'list', params],
+  srf: (brnch, no) => ['srf', 'detail', Number(brnch), String(no)],
 };
