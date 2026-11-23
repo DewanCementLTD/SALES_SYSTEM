@@ -6,6 +6,8 @@ import { branchFilter, resolveListBranches } from '../../lib/branch-scope.js';
 import { Errors } from '../../lib/errors.js';
 import { paginate } from '../../lib/oracle/paginate.js';
 import * as fbr from '../fbr/service.js';
+import { enqueue } from '../outbox/service.js';
+import { invoicePrintData } from '../plant/print.js';
 
 const n2 = (v) => (v === null || v === undefined ? null : Number(v).toFixed(2));
 const COLS = `i.INVOICE_ID, i.BRNCH, i.INVOICE_YEAR, i.INVOICE_NO, i.INVOICE_DATE, i.STATUS, i.GP_ID, i.DC_TYPE,
@@ -245,5 +247,45 @@ export default async function invoiceRoutes(app) {
           request.body,
         );
       }, request.txOpts('invoices.fbr-retry')),
+  );
+
+  app.post(
+    '/invoices/:brnch/:year/:invoiceNo/print',
+    {
+      config: { permission: P.invoice.print },
+      schema: {
+        tags,
+        summary:
+          'Queue the Commercial / Excise / Sales Tax Invoice PDF (FBR QR when accepted, BR-QR-04); file in GET /files?entity=SALES_INVOICE&key={brnch}|{year}|{invoiceNo}',
+        params: zKey,
+        response: { 202: z.object({ outboxId: z.number(), entityKey: z.string() }) },
+      },
+    },
+    async (request, reply) => {
+      const now = app.clock.now();
+      const { brnch, year, invoiceNo } = request.params;
+      const entityKey = `${brnch}|${year}|${invoiceNo}`;
+      const res = await app.db.withTx(async (tx) => {
+        const inv = await byKey(tx, request.params);
+        const data = await invoicePrintData(tx, inv.invoiceId);
+        return enqueue(tx, {
+          brnch,
+          eventType: 'PDF_RENDER',
+          aggregateType: 'SALES_INVOICE',
+          aggregateKey: entityKey,
+          channel: 'JOB',
+          dedupKey: `PDF_RENDER|INV|${entityKey}|${now.getTime()}`,
+          payload: {
+            template: 'sales-invoice',
+            entity: 'SALES_INVOICE',
+            entityKey,
+            fileName: `invoice-${invoiceNo}.pdf`,
+            data,
+          },
+          now,
+        });
+      }, request.txOpts('invoices.print'));
+      return reply.status(202).send({ outboxId: res.outboxId, entityKey });
+    },
   );
 }

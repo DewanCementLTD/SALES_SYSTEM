@@ -5,9 +5,11 @@ import { barcodeSvg, qrSvg } from './codes.js';
 import { html, raw } from './html.js';
 import brvReceipt from './brv-receipt.js';
 import contractReview from './contract-review.js';
+import deliveryChallan from './delivery-challan.js';
 import deliveryOrder from './delivery-order.js';
 import orderConfirmation from './order-confirmation.js';
 import permit from './permit.js';
+import salesInvoice from './sales-invoice.js';
 import { footerTemplate, page } from './letterhead.js';
 
 export { html, raw, escapeHtml } from './html.js';
@@ -74,6 +76,8 @@ export const TEMPLATES = {
   'contract-review': contractReview,
   'brv-receipt': brvReceipt,
   'delivery-order': deliveryOrder,
+  'delivery-challan': deliveryChallan,
+  'sales-invoice': salesInvoice,
   'order-confirmation': orderConfirmation,
   permit,
 };

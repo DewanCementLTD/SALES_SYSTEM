@@ -5,7 +5,7 @@
 // sends the invoice again (invoice.fbr_retry). Before FBR a DC can be cancelled (dc.cancel +
 // approval DC_CANCEL, BR-DC-CXL-02).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileText, RotateCcw, XCircle } from 'lucide-react';
+import { FileText, Printer, RotateCcw, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
 import { toast } from 'sonner';
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, qs } from '@/lib/api';
 import { fmtDate, fmtPKR, fmtQty } from '@/lib/format';
+import { printAndOpen } from '@/lib/print';
 import { useSession } from '@/lib/session';
 
 const TONE = {
@@ -127,6 +128,31 @@ export default function DcInvoicesPage() {
       header: '',
       cell: ({ row }) => (
         <div className="flex justify-end gap-1">
+          {s.can('invoice.print') && (
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={'Print invoice ' + row.original.invoiceNo}
+              onClick={() =>
+                printAndOpen({
+                  path:
+                    '/invoices/' +
+                    row.original.brnch +
+                    '/' +
+                    row.original.year +
+                    '/' +
+                    row.original.invoiceNo +
+                    '/print',
+                  entity: 'SALES_INVOICE',
+                  entityKey:
+                    row.original.brnch + '|' + row.original.year + '|' + row.original.invoiceNo,
+                  label: 'invoice',
+                }).catch((e) => toast.error(e.message))
+              }
+            >
+              <Printer className="size-4" />
+            </Button>
+          )}
           {['FBR_REJECTED', 'FBR_PENDING'].includes(row.original.status) &&
             s.can('invoice.fbr_retry') && (
               <Button size="sm" variant="outline" onClick={() => retry(row.original)}>

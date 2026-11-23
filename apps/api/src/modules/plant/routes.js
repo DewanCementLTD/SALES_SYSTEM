@@ -3,11 +3,13 @@
 import { P, verifyQr, zGateIn, zReason } from '@dcl/shared';
 import { z } from 'zod';
 import { Errors } from '../../lib/errors.js';
+import { enqueue } from '../outbox/service.js';
 import { SettingsReader } from '../settings/service.js';
 import { receiveReading } from './readings.js';
 import * as cancel from './cancel.js';
 import * as exit from './exit.js';
 import * as gate from './gate.js';
+import * as print from './print.js';
 import * as invoice from './invoice.js';
 import * as scan from './scan.js';
 import * as weighing from './weighing.js';
@@ -560,5 +562,76 @@ export default async function plantRoutes(app) {
         (tx) => cancel.requestDcCancel(tx, actor(request), request.params, request.body.reason),
         request.txOpts('plant.dc-cancel'),
       ),
+  );
+
+  // ---- DC details and prints (P3-11) ----
+  app.put(
+    '/plant/gate-passes/:gpId/dc',
+    {
+      config: { permission: P.dc.update },
+      schema: {
+        tags,
+        summary:
+          'Bag supplier and type, container and seal, remarks of the DC before invoicing (BR-DC-03)',
+        params: zGpParams,
+        body: z.object({
+          bagSupplier: z.string().trim().max(60).nullable().optional(),
+          bagsId: z.number().int().nullable().optional(),
+          containerNo: z.string().trim().max(200).nullable().optional(),
+          sealNo: z.string().trim().max(100).nullable().optional(),
+          remarks: z.string().trim().max(200).nullable().optional(),
+        }),
+      },
+    },
+    async (request) =>
+      app.db.withTx(async (tx) => {
+        const gp = await tx.one('SELECT BRNCH FROM GATE_PASS WHERE GP_ID = :id', {
+          id: request.params.gpId,
+        });
+        if (!gp || Number(gp.BRNCH) !== request.session.brnch)
+          throw Errors.notFound(`Gate pass ${request.params.gpId}`);
+        return print.updateDc(tx, actor(request), request.params.gpId, request.body);
+      }, request.txOpts('plant.dc-update')),
+  );
+
+  app.post(
+    '/plant/gate-passes/:gpId/print',
+    {
+      config: { permission: P.dc.print },
+      schema: {
+        tags,
+        summary:
+          'Queue the DC + gate pass PDF (signed gate-pass QR for the exit, BR-EXIT-01); file in GET /files?entity=FH_DELIVERY_CHALLAN&key={brnch}|{dcType}|{dcNo}',
+        params: zGpParams,
+        response: { 202: z.object({ outboxId: z.number(), entityKey: z.string() }) },
+      },
+    },
+    async (request, reply) => {
+      const now = app.clock.now();
+      const res = await app.db.withTx(async (tx) => {
+        const data = await print.dcPrintData(tx, request.params.gpId);
+        if (data.brnch !== request.session.brnch)
+          throw Errors.notFound(`Gate pass ${request.params.gpId}`);
+        const entityKey = `${data.brnch}|${data.gatePass.dcType}|${data.gatePass.dcNo}`;
+        const r = await enqueue(tx, {
+          brnch: data.brnch,
+          eventType: 'PDF_RENDER',
+          aggregateType: 'FH_DELIVERY_CHALLAN',
+          aggregateKey: entityKey,
+          channel: 'JOB',
+          dedupKey: `PDF_RENDER|DC|${entityKey}|${now.getTime()}`,
+          payload: {
+            template: 'delivery-challan',
+            entity: 'FH_DELIVERY_CHALLAN',
+            entityKey,
+            fileName: `dc-${data.gatePass.dcNo}.pdf`,
+            data,
+          },
+          now,
+        });
+        return { outboxId: r.outboxId, entityKey };
+      }, request.txOpts('plant.dc-print'));
+      return reply.status(202).send(res);
+    },
   );
 }

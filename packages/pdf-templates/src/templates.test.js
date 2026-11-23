@@ -211,3 +211,151 @@ describe('OC print (BR-OC-03)', () => {
     expect(c.html).toContain('class="watermark"><span>CANCELLED');
   });
 });
+
+describe('DC + gate pass print (BR-EXIT-01)', () => {
+  const data = {
+    brnch: 1,
+    gatePass: {
+      gpId: 41,
+      dcNo: '17',
+      dcType: 'OS',
+      vehicleNo: 'TKN-4521',
+      transpName: 'Shaheen Goods',
+      biltyNo: 'B-778',
+      packingType: 'BAG',
+      tareKg: 15000,
+      grossKg: 50080,
+      netKg: 35080,
+      varianceKg: 80,
+      status: 'INVOICED',
+    },
+    lines: [
+      {
+        srNo: 1,
+        doNo: '22702003944',
+        productCode: 'OPC',
+        tons: '35.080',
+        plannedBags: 700,
+        invoiceId: 9,
+      },
+    ],
+    dc: {
+      dcDate: '2026-11-23',
+      bagDesc: 'DEWAN PB',
+      bagSupplier: 'Pakland',
+      containerNo: null,
+      sealNo: null,
+    },
+    customer: { code: '912-351', name: 'MASHALLAH RICE MILL', address: 'Karachi' },
+    destination: '95 Larkana',
+    invoices: [{ invoiceId: 9, invoiceNo: '8445', fbrInvoiceNo: null }],
+    terms: [],
+  };
+  it('signed gate-pass QR for the exit scan, DC barcode, lines and weights', async () => {
+    const out = await renderTemplate('delivery-challan', data, { runAt, qrSecret });
+    expect(out.html).toContain('No. 17.1');
+    expect(out.html).toContain('95 Larkana');
+    expect(out.html).toContain('35.080');
+    expect(out.html).toContain('pending');
+    await expect(verifyQr(out.qrPayload, qrSecret)).resolves.toMatchObject({
+      ok: true,
+      doc: { docType: 'GP', brnch: 1, docNo: '41' },
+    });
+    expect(out.html).not.toContain('class="watermark"');
+  });
+  it('BR-DC-CXL-01: an aborted gate pass prints CANCELLED', async () => {
+    const out = await renderTemplate(
+      'delivery-challan',
+      { ...data, gatePass: { ...data.gatePass, status: 'ABORTED' } },
+      { runAt, qrSecret },
+    );
+    expect(out.html).toContain('class="watermark"><span>CANCELLED');
+  });
+});
+
+describe('sales tax invoice print (BR-TAX-08, BR-QR-04)', () => {
+  const invoice = {
+    invoiceNo: '8445',
+    invoiceDate: '2026-11-23',
+    status: 'FBR_ACCEPTED',
+    dcType: 'OS',
+    dcNo: '175002',
+    doNo: '22702003944',
+    vehicleNo: 'TKN-4521',
+    productCode: 'OPC',
+    priceCode: 'SKYOP2',
+    destArea: '95',
+    buyer: {
+      code: '912-351',
+      name: 'MASHALLAH RICE MILL',
+      address: 'Karachi',
+      ntn: '7387041-3',
+      strn: null,
+    },
+    qtyTon: '35.000',
+    ratePerTon: '24300.00',
+    retailExcl: '757898.31',
+    fed: '140000.00',
+    fedPerTon: '4000.00',
+    retailValue: '897898.31',
+    stPct: '18',
+    salesTax: '161621.60',
+    taxInclusiveValue: '1059519.91',
+    saleProceeds: '850500.00',
+    valueExcl: '548878.40',
+    rateExclPerTon: '15682.24',
+    whtPct: '0.1',
+    wht: '850.50',
+    totalCollectable: '851350.50',
+    fbrInvoiceNo: '0712345DI1700000000123',
+    fbrQrData: '0712345DI1700000000123',
+  };
+  const seller = {
+    name: 'Dewan Cement Limited',
+    ntn: '0712345-6',
+    strn: '12-34',
+    address: 'Dhabeji',
+  };
+  it('Part A and Part B of invoice 8445, FBR number with its QR and our signed QR', async () => {
+    const out = await renderTemplate(
+      'sales-invoice',
+      { brnch: 1, seller, invoice },
+      { runAt, qrSecret },
+    );
+    for (const v of [
+      '757,898.31',
+      '897,898.31',
+      '161,621.60',
+      '1,059,519.91',
+      '548,878.40',
+      '15,682.24',
+      '850.50',
+      '851,350.50',
+    ])
+      expect(out.html).toContain(v);
+    expect(out.html).toContain('0712345DI1700000000123');
+    expect((out.html.match(/<svg/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    await expect(verifyQr(out.qrPayload, qrSecret)).resolves.toMatchObject({
+      ok: true,
+      doc: { docType: 'INV', docNo: '8445' },
+    });
+  });
+  it('FBR pending is said; a cancelled invoice prints CANCELLED', async () => {
+    const pending = await renderTemplate(
+      'sales-invoice',
+      {
+        brnch: 1,
+        seller,
+        invoice: { ...invoice, status: 'FINAL', fbrInvoiceNo: null, fbrQrData: null },
+      },
+      { runAt, qrSecret },
+    );
+    expect(pending.html).toContain('FBR invoice number pending');
+    const c = await renderTemplate(
+      'sales-invoice',
+      { brnch: 1, seller, invoice: { ...invoice, status: 'CANCELLED' } },
+      { runAt, qrSecret },
+    );
+    expect(c.html).toContain('class="watermark"><span>CANCELLED');
+  });
+});

@@ -5,7 +5,7 @@
 // tolerance; re-weigh or ask for an override when blocked (BR-WGT-01…06). Manual weight only with
 // weigh.manual and a reason.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Loader2, Pencil, RefreshCw, Scale, ShieldAlert } from 'lucide-react';
+import { Ban, Loader2, Pencil, Printer, RefreshCw, Scale, ShieldAlert } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { ReasonDialog } from '@/components/common/dialogs';
@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { fmtQty } from '@/lib/format';
+import { printAndOpen } from '@/lib/print';
 import { useSession } from '@/lib/session';
 import { useAgent } from '@/lib/use-agent';
 import { cn } from '@/lib/utils';
@@ -299,6 +300,21 @@ export default function WeighingPage() {
                 {step && s.can('weigh.manual') && (
                   <Button variant="outline" onClick={() => setManual(step)}>
                     <Pencil className="size-4" /> Enter weight by hand
+                  </Button>
+                )}
+                {g.dcNo && s.can('dc.print') && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      printAndOpen({
+                        path: '/plant/gate-passes/' + g.gpId + '/print',
+                        entity: 'FH_DELIVERY_CHALLAN',
+                        entityKey: g.brnch + '|' + g.dcType + '|' + g.dcNo,
+                        label: 'DC',
+                      }).catch((e) => setError(e))
+                    }
+                  >
+                    <Printer className="size-4" /> Print DC
                   </Button>
                 )}
                 {['GROSS_DONE', 'OVERRIDDEN'].includes(g.status) &&
