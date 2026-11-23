@@ -47,6 +47,7 @@ const zPermit = z.object({
   cancelledBy: zN,
   cancelledOn: z.date().nullable(),
   sentToDealerOn: z.date().nullable(),
+  qrVer: z.number(),
 });
 const zPermitFull = zPermit.extend({
   areas: z.array(

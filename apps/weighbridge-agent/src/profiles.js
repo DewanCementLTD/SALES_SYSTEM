@@ -53,13 +53,13 @@ export function makeParser(spec) {
   };
 }
 
+const STX = String.fromCharCode(2);
+const ETX = String.fromCharCode(3);
+
 /**
  * Splits a byte/text stream into frames (CR, LF, CRLF or ETX end a frame; STX is dropped).
  * @param {(frame: string) => void} onFrame
  */
-const STX = String.fromCharCode(2);
-const ETX = String.fromCharCode(3);
-
 export function makeFramer(onFrame, { maxLength = 256 } = {}) {
   let buf = '';
   return (chunk) => {

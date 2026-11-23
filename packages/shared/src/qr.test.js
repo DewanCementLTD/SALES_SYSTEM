@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseQr, signQr, verifyQr } from './qr.js';
+import { gateCheck, offlineQrCheck, parseQr, qrSignature, signQr, verifyQr } from './qr.js';
 
 const SECRET = 'test-secret-for-qr-signing-only';
 
@@ -40,5 +40,34 @@ describe('signed QR (BR-QR-01..03)', () => {
       reason: 'MALFORMED',
     });
     await expect(signQr({ docType: 'DO', brnch: 3, docNo: '5', ver: 1 }, SECRET)).rejects.toThrow();
+  });
+});
+
+describe('gate checks of a QR (BR-QR-02/03, BR-OFF-02)', () => {
+  const secret = 'test-qr-secret-0001';
+  const doc = { docType: 'DO', brnch: 1, docNo: 'OS-22702003944', ver: 2 };
+  it('BR-OFF-02: offline check uses the cached signature, no secret needed', async () => {
+    const qr = await signQr(doc, secret);
+    const sig = await qrSignature(doc, secret);
+    const entries = [{ docType: 'DO', docNo: 'OS-22702003944', ver: 2, sig, status: 'ISSUED' }];
+    expect(offlineQrCheck(qr, entries, 1)).toMatchObject({ ok: true });
+    const forged = `${qr.slice(0, -4)}AAAA`;
+    expect(offlineQrCheck(forged, entries, 1).reason).toBe('BAD_SIGNATURE');
+    expect(offlineQrCheck('hello', entries, 1).reason).toBe('MALFORMED');
+    expect(offlineQrCheck(qr, entries, 2).reason).toBe('WRONG_BRANCH');
+    expect(offlineQrCheck(qr, [], 1).reason).toBe('UNKNOWN');
+  });
+  it('BR-QR-03: an old print (lower version) is refused; held and closed documents too', async () => {
+    const old = await signQr({ ...doc, ver: 1 }, secret);
+    const sig1 = await qrSignature({ ...doc, ver: 1 }, secret);
+    const snap = (status, ver = 2, sig) => ({ brnch: 1, ver, status, sig });
+    const parsed = { ...parseQr(old) };
+    expect(gateCheck(parsed, snap('ISSUED', 2), 1)).toMatchObject({
+      reason: 'OLD_VERSION',
+      ruleId: 'BR-QR-03',
+    });
+    expect(gateCheck(parsed, snap('ON_HOLD', 1, sig1), 1).reason).toBe('ON_HOLD');
+    expect(gateCheck(parsed, snap('CANCELLED', 1), 1).reason).toBe('NOT_OPEN');
+    expect(gateCheck(parsed, snap('PARTLY_DISPATCHED', 1), 1).ok).toBe(true);
   });
 });

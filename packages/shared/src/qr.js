@@ -75,3 +75,58 @@ export async function verifyQr(payload, secret) {
   const { sig: _sig, ...rest } = doc;
   return { ok: true, doc: rest };
 }
+
+/** Signature part of a document's QR (the offline cache carries it, never the secret). */
+export async function qrSignature(doc, secret) {
+  return hmac(secret, body(doc));
+}
+
+/** States in which a document may be loaded at the gate (BR-QR-02). */
+export const QR_OPEN_STATES = Object.freeze(['ISSUED', 'PARTLY_DISPATCHED']);
+
+/** Gate messages per reason (BR-QR-02/03). */
+export const QR_REASONS = Object.freeze({
+  MALFORMED: 'This is not a DCL document QR',
+  BAD_SIGNATURE: 'The QR signature is not valid: the print may be forged',
+  UNKNOWN: 'No open document with this number in this branch',
+  WRONG_BRANCH: 'The document belongs to the other plant',
+  OLD_VERSION: 'This print was replaced (reprinted after a change): ask for the new print',
+  ON_HOLD: 'The document is on hold',
+  NOT_OPEN: 'The document is cancelled or fully dispatched',
+});
+
+/**
+ * Gate checks of a scanned QR against a document snapshot (BR-QR-02/03). Used online (snapshot
+ * from the database, signature already verified with the secret) and offline (BR-OFF-02: the
+ * snapshot from the offline cache carries the expected `sig`, so the tablet needs no secret).
+ * @param {{ docType: string, brnch: number, docNo: string, ver: number, sig?: string }} qr parsed QR
+ * @param {{ brnch: number, ver: number, status: string, sig?: string } | null} snap
+ * @param {number} plantBrnch branch of the gate
+ * @returns {{ ok: true } | { ok: false, reason: keyof typeof QR_REASONS, ruleId: string }}
+ */
+export function gateCheck(qr, snap, plantBrnch) {
+  const no = (reason, ruleId = 'BR-QR-02') => ({ ok: false, reason, ruleId });
+  if (qr.brnch !== plantBrnch) return no('WRONG_BRANCH');
+  if (!snap) return no('UNKNOWN');
+  // version first: offline only the current version's signature is known (BR-QR-03)
+  if (Number(snap.ver) !== Number(qr.ver)) return no('OLD_VERSION', 'BR-QR-03');
+  if (snap.sig !== undefined && (!qr.sig || !safeEqual(snap.sig, qr.sig)))
+    return no('BAD_SIGNATURE');
+  if (snap.status === 'ON_HOLD') return no('ON_HOLD');
+  if (!QR_OPEN_STATES.includes(snap.status)) return no('NOT_OPEN');
+  return { ok: true };
+}
+
+/**
+ * Offline gate check (BR-OFF-02): find the scanned document in the cached entries and check it.
+ * @param {string} payload scanned text
+ * @param {{ docType: string, docNo: string, ver: number, sig: string, status: string }[]} entries
+ * @param {number} plantBrnch
+ */
+export function offlineQrCheck(payload, entries, plantBrnch) {
+  const qr = parseQr(payload);
+  if (!qr) return { ok: false, reason: 'MALFORMED', ruleId: 'BR-QR-02' };
+  const e = entries.find((x) => x.docType === qr.docType && String(x.docNo) === String(qr.docNo));
+  const res = gateCheck(qr, e ? { ...e, brnch: plantBrnch } : null, plantBrnch);
+  return res.ok ? { ok: true, entry: e } : res;
+}

@@ -112,7 +112,7 @@ describe('permits (P2-05)', () => {
     );
     expect(r.statusCode, r.body).toBe(200);
     p = r.json();
-    expect(p).toMatchObject({ qtyTon: '4020.000', value: '100780000.00' });
+    expect(p).toMatchObject({ qtyTon: '4020.000', value: '100780000.00', qrVer: 2 }); // BR-QR-03 reprint
     expect(p.adjustments).toMatchObject([
       { areaDoc: '2190', qtyTon: '-1000.000', amount: '-25070000.00' },
     ]);

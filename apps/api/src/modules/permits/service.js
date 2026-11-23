@@ -46,7 +46,7 @@ const COLS = `m.BRNCH, TO_CHAR(m.PERMIT_NO) AS PERMIT_NO, m.PERMIT_DATE, m.VALID
   m.CUSTOMER_CODE, c.CUSTOMER_NAME, m.PRODUCT_CODE, m.QTY, m.PERMIT_VALUE, m.YEAR, m.DOB, m.DCB, m.CRLMT,
   ${PERMIT_STATUS_SQL} AS STATUS, m.ROW_VER, NVL(m.CREATED_BY, 'legacy') AS CREATED_BY, m.CREATED_ON,
   m.ISSUED_BY, m.ISSUED_ON, m.CFO_REQ_ID, m.OVERRIDE_REQ_ID, m.CANCEL_REASON, m.CANCELLED_BY,
-  m.CANCELLED_ON, m.SENT_TO_DEALER_ON`;
+  m.CANCELLED_ON, m.SENT_TO_DEALER_ON, NVL(m.QR_VER, 1) AS QR_VER`;
 const FROM = `PERMIT_MST_CITY m
   LEFT JOIN CUSTOMER_INFO c ON c.BRNCH = m.BRNCH AND c.CUSTOMER_CODE = m.CUSTOMER_CODE`;
 
@@ -79,6 +79,7 @@ function mapPermit(r) {
     cancelledBy: r.CANCELLED_BY ?? null,
     cancelledOn: r.CANCELLED_ON ?? null,
     sentToDealerOn: r.SENT_TO_DEALER_ON ?? null,
+    qrVer: Number(r.QR_VER ?? 1),
   };
 }
 
@@ -603,7 +604,12 @@ export async function adjustPermit(tx, actor, brnch, permitNo, rowVer, { lines, 
     const l = lines.find((x) => x.lnkno === a.lnkno);
     return s.plus(dec(l ? l.qtyTon : a.qtyTon));
   }, dec(0));
-  await bump(tx, actor, p, { QTY: newQty.toFixed(3), PERMIT_VALUE: newValue.toFixed(2) });
+  // BR-QR-03: quantities changed → the old print is no longer valid
+  await bump(tx, actor, p, {
+    QTY: newQty.toFixed(3),
+    PERMIT_VALUE: newValue.toFixed(2),
+    QR_VER: p.qrVer + 1,
+  });
   await ledger.post(tx, actor, [
     {
       brnch,
