@@ -1,6 +1,7 @@
 // Route registration. Every module mounts under /api/v1.
 import approvalRoutes from './approvals/routes.js';
 import auditRoutes from './audit/routes.js';
+import brvRoutes from './brv/routes.js';
 import authRoutes from './auth/routes.js';
 import customerRoutes from './customers/routes.js';
 import fileRoutes from './files/routes.js';
@@ -34,4 +35,5 @@ export async function registerModules(app) {
   await app.register(pricingRoutes, { prefix: '/api/v1' });
   await app.register(ledgerRoutes, { prefix: '/api/v1' });
   await app.register(srfRoutes, { prefix: '/api/v1' });
+  await app.register(brvRoutes, { prefix: '/api/v1' });
 }

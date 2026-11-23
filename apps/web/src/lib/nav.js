@@ -52,15 +52,28 @@ export const NAV = [
     label: 'Payments',
     icon: Banknote,
     items: [
-      { label: 'BRV', href: '/payments/brv', perm: ['brv.view'], phase: 'P2' },
+      { label: 'BRV', href: '/payments/brv', perm: ['brv.view'], phase: 'P2', built: true },
       {
         label: 'Verification queue',
         href: '/payments/verification',
         perm: ['brv.verify'],
         phase: 'P2',
+        built: true,
       },
-      { label: 'Bounce', href: '/payments/bounce', perm: ['brv.bounce'], phase: 'P2' },
-      { label: 'BRV cancel', href: '/payments/cancel', perm: ['brv.cancel'], phase: 'P2' },
+      {
+        label: 'Bounce',
+        href: '/payments/bounce',
+        perm: ['brv.bounce'],
+        phase: 'P2',
+        built: true,
+      },
+      {
+        label: 'BRV cancel',
+        href: '/payments/cancel',
+        perm: ['brv.cancel'],
+        phase: 'P2',
+        built: true,
+      },
     ],
   },
   {

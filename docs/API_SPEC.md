@@ -236,17 +236,20 @@ Confirm response:
 
 ## 8. BRV
 
-| Method | Path                                             | Permission   | Notes                                                       |
-| ------ | ------------------------------------------------ | ------------ | ----------------------------------------------------------- |
-| GET    | `/brv?brnch=&status=&customer=&bank=&from=&to=`  | `brv.view`   |                                                             |
-| GET    | `/brv/verification-queue?brnch=&bank=&from=&to=` | `brv.verify` | ENTERED, oldest first                                       |
-| GET    | `/brv/{brnch}/{receiptNo}/{cashCheqCd}`          | `brv.view`   |                                                             |
-| POST   | `/brv`                                           | `brv.create` | ENTERED                                                     |
-| PUT    | `/brv/{brnch}/{receiptNo}/{cashCheqCd}`          | `brv.update` | ENTERED only                                                |
-| POST   | `…/verify`                                       | `brv.verify` | `{ method, bankRef, remarks }`; maker-checker; posts ledger |
-| POST   | `…/bounce`                                       | `brv.bounce` | `{ reason, returnDate }`; returns impacted OCs/DOs          |
-| POST   | `…/cancel`                                       | `brv.cancel` | ENTERED only                                                |
-| GET    | `…/receipt.pdf`                                  | `brv.print`  |                                                             |
+| Method | Path                                             | Permission   | Notes                                                                                                         |
+| ------ | ------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------- |
+| GET    | `/brv?brnch=&status=&customer=&bank=&from=&to=`  | `brv.view`   |                                                                                                               |
+| GET    | `/brv/verification-queue?brnch=&bank=&from=&to=` | `brv.verify` | ENTERED, oldest first                                                                                         |
+| GET    | `/brv/{brnch}/{receiptNo}`                       | `brv.view`   | + `linkedOcs` (ORDER_CONFIRM_BRV)                                                                             |
+| POST   | `/brv`                                           | `brv.create` | ENTERED                                                                                                       |
+| PUT    | `/brv/{brnch}/{receiptNo}`                       | `brv.update` | ENTERED only                                                                                                  |
+| POST   | `…/verify`                                       | `brv.verify` | `{ method, bankRef, remarks }`; maker-checker; posts ledger                                                   |
+| POST   | `…/bounce`                                       | `brv.bounce` | `{ reason, returnDate }`; returns impacted OCs/DOs                                                            |
+| POST   | `…/clear`                                        | `brv.verify` | `{ clearDate }`; VERIFIED → CLEARED (no ledger effect)                                                        |
+| POST   | `…/cancel`                                       | `brv.cancel` | `{ reason }`; ENTERED only (BR-BRV-06)                                                                        |
+| POST   | `…/receipt`                                      | `brv.print`  | Queues the receipt PDF → 202 `{ outboxId, entityKey }`; file in `GET /files?entity=CASH_CHEQUE_RECEIPTS&key=` |
+
+Built 23 Nov 2026. Every BRV has `CASH_CHEQ_CD = 'Q'` (all legacy rows), so paths use `{brnch}/{receiptNo}`. Commands need `If-Match`. Body: `{ brnch (create only), brvDate, customerCode, instCode, category (CATEGORY_TYPE A–D), bankCode (customer's bank), chequeNo, chequeDate, depositAccount (COMPANY_BANK code, required), amount, salesTax, tax, freight, fundFrom, transporter, depositor, city, remarks }`. Verify credits the DO and DC ledgers (entry date = BRV date); bounce returns `{ brv, impact: { releasedOcs, confirmedOcs } }`: links of OCs not yet confirmed are set to 0 (`ORDER_CONFIRM_BRV.AMOUNT`, never deleted), confirmed OCs are listed for the BR-PRC-08 follow-up (P2-07). Legacy BRVs read as VERIFIED (RETURN_CD P), CLEARED (C) or BOUNCED (R); `RETURN_CD` is kept in sync.
 
 ## 9. Permits
 

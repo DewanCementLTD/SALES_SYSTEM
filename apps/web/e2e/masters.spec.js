@@ -63,7 +63,7 @@ test('P1-01: products & periods are read-only and show the effective-period note
 
 test('screens of later phases still show the planned screen', async ({ page }) => {
   await login(page);
-  await page.goto('/payments/brv');
+  await page.goto('/permits');
   await expect(page.getByText(/Planned for P2/)).toBeVisible();
 });
 

@@ -25,4 +25,6 @@ export const qk = {
   ledger: (brnch, code, params) => ['ledger', Number(brnch), code, params],
   srfs: (params) => ['srf', 'list', params],
   srf: (brnch, no) => ['srf', 'detail', Number(brnch), String(no)],
+  brvs: (kind, params) => ['brv', kind, params],
+  brv: (brnch, no) => ['brv', 'detail', Number(brnch), String(no)],
 };

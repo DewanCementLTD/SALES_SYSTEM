@@ -3,6 +3,7 @@
 import { signQr } from '@dcl/shared';
 import { barcodeSvg, qrSvg } from './codes.js';
 import { html, raw } from './html.js';
+import brvReceipt from './brv-receipt.js';
 import contractReview from './contract-review.js';
 import { footerTemplate, page } from './letterhead.js';
 
@@ -65,7 +66,11 @@ async function sample(data, { runAt, qrSecret }) {
   };
 }
 
-export const TEMPLATES = { sample, 'contract-review': contractReview };
+export const TEMPLATES = {
+  sample,
+  'contract-review': contractReview,
+  'brv-receipt': brvReceipt,
+};
 
 /** Render a registered template to HTML. */
 export async function renderTemplate(name, data, opts) {
