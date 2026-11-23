@@ -9,6 +9,7 @@ import geoRoutes from './geo/routes.js';
 import ledgerRoutes from './ledger/routes.js';
 import masterRoutes from './masters/routes.js';
 import notificationRoutes from './notifications/routes.js';
+import ocRoutes from './oc/routes.js';
 import outboxRoutes from './outbox/routes.js';
 import pricingRoutes from './pricing/routes.js';
 import roleRoutes from './roles/routes.js';
@@ -36,4 +37,5 @@ export async function registerModules(app) {
   await app.register(ledgerRoutes, { prefix: '/api/v1' });
   await app.register(srfRoutes, { prefix: '/api/v1' });
   await app.register(brvRoutes, { prefix: '/api/v1' });
+  await app.register(ocRoutes, { prefix: '/api/v1' });
 }

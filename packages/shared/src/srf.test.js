@@ -117,3 +117,27 @@ describe('OC pricing (P2-02)', () => {
     expect(overriddenFields(null, { consPrice: '23100' })).toEqual(['consPrice']);
   });
 });
+
+describe('OC edit (P2-03)', () => {
+  const prices = {
+    retailPrice: '24284.75',
+    tradeDisc: '0',
+    salesTax: '4371.25',
+    fed: '4000',
+    consPrice: '23200',
+    expense: '0',
+    discount: '0',
+  };
+  it('BR-OC-02: schedule must equal the OC quantity; prices are validated', async () => {
+    const { zOcUpdate } = await import('./index.js');
+    const ok = { qtyTon: '40', prices, schedule: [{ srNo: 1, date: '2026-11-24', qtyTon: '40' }] };
+    expect(zOcUpdate.safeParse(ok).success).toBe(true);
+    expect(
+      zOcUpdate.safeParse({ ...ok, schedule: [{ srNo: 1, date: '2026-11-24', qtyTon: '30' }] })
+        .success,
+    ).toBe(false);
+    expect(zOcUpdate.safeParse({ ...ok, prices: { ...prices, discount: '-5' } }).success).toBe(
+      false,
+    );
+  });
+});

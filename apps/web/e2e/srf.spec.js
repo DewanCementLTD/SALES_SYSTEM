@@ -56,3 +56,34 @@ test('P2-01: new SRF → save draft → submit creates the draft OC', async ({ p
   await expect(page.getByRole('link', { name: /^Open OC \d+/ })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/22-srf-submitted.png` });
 });
+
+test('P2-03: OC from the SRF — review, approve, confirm against the balance', async ({ page }) => {
+  await login(page);
+  await page.goto('/orders/srf?status=SUBMITTED');
+  // the SRF submitted by the previous test (sandbox keeps one transaction per run)
+  await page
+    .getByRole('cell', { name: /^\d{9}$/ })
+    .first()
+    .click();
+  await page.getByRole('link', { name: /^Open OC \d+/ }).click();
+  await expect(
+    page.getByRole('heading', { level: 1, name: /^Order confirmation \d+/ }),
+  ).toBeVisible();
+  await expect(page.getByText('Total net value')).toBeVisible();
+  await expect(page.getByLabel('Consumer price')).toHaveValue('24400.00');
+
+  await page.getByRole('button', { name: 'Mark reviewed' }).click();
+  await expect(page.getByText('OC marked reviewed')).toBeVisible();
+  await page.getByRole('button', { name: 'Approve OC' }).click();
+  await expect(page.getByText('OC approved')).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/25-oc-approved.png`, fullPage: true });
+
+  await page.getByRole('button', { name: 'Confirm & create DOs' }).click();
+  // depending on the customer's credit, the OC confirms or the balance is short (BR-OC-06)
+  await expect(
+    page
+      .getByText(/OC confirmed: \d+ DO\(s\) issued/)
+      .or(page.getByText(/is less than the OC value/)),
+  ).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/26-oc-confirm.png`, fullPage: true });
+});

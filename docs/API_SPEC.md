@@ -215,6 +215,8 @@ SRF body (create):
 | POST   | `/oc/{brnch}/{ocNo}/duplicate`                      | `oc.create`                                 | New DRAFT                                                                                          |
 | GET    | `/oc/{brnch}/{ocNo}/print.pdf`                      | `oc.print`                                  |                                                                                                    |
 
+Built 23 Nov 2026. Commands need `If-Match`. Additional endpoints: `GET /oc/{brnch}/{ocNo}/balance` (`customer.view_balance`): BalanceService result with `value` and `shortfall`. `GET /oc/{brnch}/{ocNo}` also returns `doTypes` (DELIVERY_ORDER_TYPE rows of the OC product, the customer's last used first) and `linkableBrvs` (verified/cleared BRVs of the customer with money not yet applied). `PUT /oc/{brnch}/{ocNo}` body = `{ qtyTon, prices: { retailPrice, tradeDisc, salesTax, fed, consPrice, expense, discount }, remarks, schedule }`; a price that differs from `masterPrices` sets `priceOverride` = `Y` (pending; `A` once the OC_PRICE_OVERRIDE request is approved; `N` none). `PUT …/brvs` body = `{ links: [{ receiptNo, amount }] }` (CASH_CHEQ_CD is always Q); the BRV's `APPLIED_AMT` is kept. Confirm body = `{ doType }` (required: DO type of the OC product). The DO number continues the single DOC_SEQUENCE `DO` counter until Finance confirms the per-type sub-series (SCHEMA §4). Print (`print.pdf`) is not built yet.
+
 Confirm response:
 
 ```json

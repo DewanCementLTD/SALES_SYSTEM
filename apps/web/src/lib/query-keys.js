@@ -27,4 +27,7 @@ export const qk = {
   srf: (brnch, no) => ['srf', 'detail', Number(brnch), String(no)],
   brvs: (kind, params) => ['brv', kind, params],
   brv: (brnch, no) => ['brv', 'detail', Number(brnch), String(no)],
+  ocs: (params) => ['oc', 'list', params],
+  oc: (brnch, no) => ['oc', 'detail', Number(brnch), String(no)],
+  ocBalance: (brnch, no, ver) => ['customers', 'balance', 'oc', Number(brnch), String(no), ver],
 };
