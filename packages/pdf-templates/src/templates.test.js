@@ -156,3 +156,58 @@ describe('Permit print (BR-PMT-04)', () => {
     });
   });
 });
+
+describe('OC print (BR-OC-03)', () => {
+  const oc = {
+    ocNo: '227000758',
+    orderDate: '2026-11-23',
+    status: 'REVIEWED',
+    customerCode: '912-351',
+    customerName: 'MASHALLAH RICE MILL',
+    productCode: 'OPC',
+    qtyTon: '35.00',
+    priceOverride: 'Y',
+    schedule: [{ srNo: 1, date: '2026-11-25', qtyTon: '35.00' }],
+    brvs: [],
+    dos: [],
+  };
+  const breakdown = {
+    retailPrice: '27000.00',
+    tradeDisc: '0.00',
+    tradeDiscPrice: '27000.00',
+    salesTax: '0.00',
+    fed: '0.00',
+    consPrice: '27000.00',
+    expense: '0.00',
+    discount: '500.00',
+    netPrice: '26500.00',
+    value: '927500.00',
+  };
+  it('BR-OC-02: price breakdown marks overridden prices; DRAFT watermark before approval', async () => {
+    const out = await renderTemplate(
+      'order-confirmation',
+      { brnch: 1, oc, breakdown, overridden: ['discount'], terms: [] },
+      { runAt, qrSecret },
+    );
+    expect(out.html).toContain('No. 227000758.1');
+    expect(out.html).toContain('Less discount *');
+    expect(out.html).toContain('override pending');
+    expect(out.html).toContain('927,500.00');
+    expect(out.html).toContain('class="watermark"><span>DRAFT');
+  });
+  it('a confirmed OC prints without a watermark; cancelled with CANCELLED', async () => {
+    const ok = await renderTemplate(
+      'order-confirmation',
+      { brnch: 1, oc: { ...oc, status: 'CONFIRMED' }, breakdown, overridden: [], terms: ['T1'] },
+      { runAt, qrSecret },
+    );
+    expect(ok.html).not.toContain('class="watermark"');
+    expect(ok.html).toContain('T1');
+    const c = await renderTemplate(
+      'order-confirmation',
+      { brnch: 1, oc: { ...oc, status: 'CANCELLED' }, breakdown, overridden: [], terms: [] },
+      { runAt, qrSecret },
+    );
+    expect(c.html).toContain('class="watermark"><span>CANCELLED');
+  });
+});

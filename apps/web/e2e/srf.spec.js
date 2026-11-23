@@ -71,6 +71,7 @@ test('P2-03: OC from the SRF — review, approve, confirm against the balance', 
   ).toBeVisible();
   await expect(page.getByText('Total net value')).toBeVisible();
   await expect(page.getByLabel('Consumer price')).toHaveValue('24400.00');
+  await expect(page.getByRole('button', { name: 'Print OC' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Mark reviewed' }).click();
   await expect(page.getByText('OC marked reviewed')).toBeVisible();

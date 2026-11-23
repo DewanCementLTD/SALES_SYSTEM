@@ -13,12 +13,10 @@ import { PageHeader, ProblemAlert, Section, StatusBadge } from '@/components/com
 import { DO_TONE } from '@/components/delivery/do-list';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
+import { printAndOpen } from '@/lib/print';
 import { fmtDate, fmtDateTime, fmtPKR, fmtQty } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { useSession } from '@/lib/session';
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const filesOf = (key) => api(`/files?entity=DELIVERY_ORDER&key=${encodeURIComponent(key)}`);
 
 export default function DoDetailPage() {
   const { brnch, doType, doNo } = useParams();
@@ -50,21 +48,14 @@ export default function DoDetailPage() {
   const post = (path, body = {}) =>
     api(`${base}/${path}`, { method: 'POST', body, headers: { 'if-match': `"${d.rowVer}"` } });
   const print = () =>
-    run('print', async () => {
-      const k = `${brnch}|${doType}|${doNo}`;
-      const before = new Set((await filesOf(k)).items.map((x) => x.attId));
-      await post('print');
-      toast.info('Preparing the DO print…');
-      for (let i = 0; i < 20; i += 1) {
-        await sleep(1500);
-        const f = (await filesOf(k)).items.find((x) => !before.has(x.attId));
-        if (f) {
-          window.open(`/api/v1/files/${f.attId}`, '_blank', 'noopener');
-          return;
-        }
-      }
-      toast.warning('The print is still being prepared. Try again in a minute.');
-    }).catch(() => {});
+    run('print', () =>
+      printAndOpen({
+        path: `${base}/print`,
+        entity: 'DELIVERY_ORDER',
+        entityKey: `${brnch}|${doType}|${doNo}`,
+        label: 'DO',
+      }),
+    ).catch(() => {});
   const open = d && ['ISSUED', 'PARTLY_DISPATCHED', 'ON_HOLD'].includes(d.status);
   const rows = d
     ? [

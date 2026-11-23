@@ -9,12 +9,11 @@ import { toast } from 'sonner';
 import { PageHeader, ProblemAlert } from '@/components/common/page';
 import { PermitForm } from '@/components/permits/permit-form';
 import { api } from '@/lib/api';
+import { printAndOpen } from '@/lib/print';
 import { fmtPKR } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { useSession } from '@/lib/session';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const filesOf = (key) => api(`/files?entity=PERMIT_MST_CITY&key=${encodeURIComponent(key)}`);
 const DONE = {
   'send-cfo': 'Sent to the CFO',
   'request-override': 'Balance override sent for approval',
@@ -59,19 +58,12 @@ export default function PermitDetailPage() {
           }}
           command={async (path, body = {}) => {
             if (path === 'print') {
-              const k = `${brnch}|${permitNo}`;
-              const before = new Set((await filesOf(k)).items.map((x) => x.attId));
-              await api(`${base}/print`, { method: 'POST', body: {} });
-              toast.info('Preparing the permit print…');
-              for (let i = 0; i < 20; i += 1) {
-                await sleep(1500);
-                const f = (await filesOf(k)).items.find((x) => !before.has(x.attId));
-                if (f) {
-                  window.open(`/api/v1/files/${f.attId}`, '_blank', 'noopener');
-                  return;
-                }
-              }
-              toast.warning('The print is still being prepared. Try again in a minute.');
+              await printAndOpen({
+                path: `${base}/print`,
+                entity: 'PERMIT_MST_CITY',
+                entityKey: `${brnch}|${permitNo}`,
+                label: 'permit',
+              });
               return;
             }
             const res = await api(`${base}/${path}`, {

@@ -18,6 +18,7 @@ import { recordAudit } from '../audit/service.js';
 import { writeOrderAdvice } from '../cancellations/service.js';
 import * as ledger from '../ledger/service.js';
 import { notifyDealer } from '../notifications/dealer.js';
+import { printTexts } from '../texts/service.js';
 
 const ENTITY = 'DELIVERY_ORDER';
 const iso = (d) => (d ? businessDate(d) : null);
@@ -333,11 +334,5 @@ export async function sendDo(tx, actor, brnch, doType, doNo, channels) {
 /** Print data (BR-DO-03): DO, terms from PRINT_TEXT (DO_TERMS), preparer. */
 export async function printData(tx, brnch, doType, doNo) {
   const d = await getDo(tx, brnch, doType, doNo);
-  const terms = await tx.many(
-    `SELECT TEXT_BODY FROM PRINT_TEXT WHERE TEXT_CODE = 'DO_TERMS' AND NVL(ACTIVE, 'Y') = 'Y'
-        AND BRNCH = (SELECT MAX(p.BRNCH) FROM PRINT_TEXT p WHERE p.TEXT_CODE = 'DO_TERMS' AND p.BRNCH IN (0, :b))
-      ORDER BY SR_NO`,
-    { b: brnch },
-  );
-  return { brnch, do: d, terms: terms.map((t) => t.TEXT_BODY) };
+  return { brnch, do: d, terms: await printTexts(tx, brnch, 'DO_TERMS') };
 }

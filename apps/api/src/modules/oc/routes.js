@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { resolveListBranches } from '../../lib/branch-scope.js';
 import { Errors } from '../../lib/errors.js';
 import { etag, ifMatch } from '../../lib/http.js';
+import { enqueue } from '../outbox/service.js';
 import * as repo from './repo.js';
 import * as svc from './service.js';
 
@@ -202,6 +203,45 @@ export default async function ocRoutes(app) {
         if (!oc) throw Errors.notFound(`OC ${ocNo}`);
         return svc.ocBalance(tx, oc, app.clock.now());
       }, request.txOpts('oc.balance'));
+    },
+  );
+
+  app.post(
+    '/oc/:brnch/:ocNo/print',
+    {
+      config: { permission: P.oc.print },
+      schema: {
+        tags,
+        summary:
+          'Queue the OC PDF (breakdown, schedule, BRVs, DOs; DRAFT/CANCELLED watermark); file in GET /files?entity=ORDER_CONFIRM&key={brnch}|{ocNo}',
+        params: zParams,
+        response: { 202: z.object({ outboxId: z.number(), entityKey: z.string() }) },
+      },
+    },
+    async (request, reply) => {
+      const { brnch, ocNo } = request.params;
+      const now = app.clock.now();
+      const entityKey = `${brnch}|${ocNo}`;
+      const res = await app.db.withTx(async (tx) => {
+        const data = await svc.printData(tx, brnch, ocNo);
+        return enqueue(tx, {
+          brnch,
+          eventType: 'PDF_RENDER',
+          aggregateType: 'ORDER_CONFIRM',
+          aggregateKey: entityKey,
+          channel: 'JOB',
+          dedupKey: `PDF_RENDER|OC|${entityKey}|${now.getTime()}`,
+          payload: {
+            template: 'order-confirmation',
+            entity: 'ORDER_CONFIRM',
+            entityKey,
+            fileName: `oc-${ocNo}.pdf`,
+            data,
+          },
+          now,
+        });
+      }, request.txOpts('oc.print'));
+      return reply.status(202).send({ outboxId: res.outboxId, entityKey });
     },
   );
 

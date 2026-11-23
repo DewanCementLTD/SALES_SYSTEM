@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { resolveListBranches } from '../../lib/branch-scope.js';
 import { etag, ifMatch } from '../../lib/http.js';
 import { enqueue } from '../outbox/service.js';
+import { printTexts } from '../texts/service.js';
 import * as svc from './service.js';
 
 const zParams = z.object({
@@ -288,12 +289,7 @@ export default async function permitRoutes(app) {
       const entityKey = `${brnch}|${permitNo}`;
       const res = await app.db.withTx(async (tx) => {
         const p = await svc.getPermit(tx, brnch, permitNo);
-        const terms = await tx.many(
-          `SELECT TEXT_BODY FROM PRINT_TEXT WHERE TEXT_CODE = 'PERMIT_TERMS' AND NVL(ACTIVE, 'Y') = 'Y'
-              AND BRNCH = (SELECT MAX(x.BRNCH) FROM PRINT_TEXT x WHERE x.TEXT_CODE = 'PERMIT_TERMS' AND x.BRNCH IN (0, :b))
-            ORDER BY SR_NO`,
-          { b: brnch },
-        );
+        const terms = await printTexts(tx, brnch, 'PERMIT_TERMS');
         return enqueue(tx, {
           brnch,
           eventType: 'PDF_RENDER',
@@ -306,7 +302,7 @@ export default async function permitRoutes(app) {
             entity: 'PERMIT_MST_CITY',
             entityKey,
             fileName: `permit-${permitNo}.pdf`,
-            data: { brnch, permit: p, terms: terms.map((x) => x.TEXT_BODY) },
+            data: { brnch, permit: p, terms },
           },
           now,
         });

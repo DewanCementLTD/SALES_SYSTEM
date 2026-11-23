@@ -22,6 +22,7 @@ import {
   Link2,
   Loader2,
   Plus,
+  Printer,
   Save,
   Send,
   ShieldAlert,
@@ -721,6 +722,20 @@ export function OcView({ oc, can, mine, command, onChanged }) {
                   onClick={() => run('dup', () => command('duplicate')).catch(() => {})}
                 >
                   <Copy className="size-4" /> Duplicate OC
+                </Button>
+              )}
+              {can('oc.print') && (
+                <Button
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() => run('print', () => command('print')).catch(() => {})}
+                >
+                  {busy === 'print' ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Printer className="size-4" />
+                  )}{' '}
+                  Print OC
                 </Button>
               )}
             </div>

@@ -230,6 +230,21 @@ describe('OC (P2-03)', () => {
     expect(dup.json().ocNo).not.toBe(ocNo);
     expect(dup.json().schedule).toHaveLength(2);
 
+    // BR-OC-03: the print is queued with the breakdown and the OC_TERMS paragraphs
+    const pr = await fin.post(`${base}/print`, {});
+    expect(pr.statusCode, pr.body).toBe(202);
+    expect(pr.json().entityKey).toBe(`2|${ocNo}`);
+    const job = await t.db.read((tx) =>
+      tx.one('SELECT PAYLOAD FROM NOTIFICATION_OUTBOX WHERE OUTBOX_ID = :i', {
+        i: pr.json().outboxId,
+      }),
+    );
+    const payload = JSON.parse(job.PAYLOAD);
+    expect(payload.template).toBe('order-confirmation');
+    expect(payload.data.breakdown).toMatchObject({ netPrice: '25700.00', value: '1028000.00' });
+    expect(payload.data.overridden).toEqual([]);
+    expect(Array.isArray(payload.data.terms)).toBe(true);
+
     expect((await fin.get('/api/v1/oc?brnch=1')).statusCode).toBe(403);
     const list = (await fin.get('/api/v1/oc?pageSize=5')).json();
     expect(list.items.every((o) => o.brnch === 2)).toBe(true);

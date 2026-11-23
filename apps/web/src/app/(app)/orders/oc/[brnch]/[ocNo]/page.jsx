@@ -10,6 +10,7 @@ import { PageHeader, ProblemAlert } from '@/components/common/page';
 import { OcView } from '@/components/orders/oc-view';
 import { api } from '@/lib/api';
 import { fmtPKR } from '@/lib/format';
+import { printAndOpen } from '@/lib/print';
 import { qk } from '@/lib/query-keys';
 import { useSession } from '@/lib/session';
 
@@ -56,6 +57,14 @@ export default function OcDetailPage() {
             qc.invalidateQueries({ queryKey: ['customers', 'balance'] });
           }}
           command={async (path, body = {}, method = 'POST') => {
+            if (path === 'print') {
+              return printAndOpen({
+                path: `/oc/${brnch}/${ocNo}/print`,
+                entity: 'ORDER_CONFIRM',
+                entityKey: `${brnch}|${ocNo}`,
+                label: 'OC',
+              });
+            }
             const res = await api(`/oc/${brnch}/${ocNo}${path ? `/${path}` : ''}`, {
               method,
               body,

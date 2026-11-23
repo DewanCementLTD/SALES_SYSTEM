@@ -27,6 +27,7 @@ import * as ledger from '../ledger/service.js';
 import { nextNumber } from '../numbering/service.js';
 import { notifyDealer } from '../notifications/dealer.js';
 import { SettingsReader } from '../settings/service.js';
+import { printTexts } from '../texts/service.js';
 import { cancelOcRow, createDraftOc } from './builder.js';
 import * as repo from './repo.js';
 
@@ -88,6 +89,18 @@ async function setStatus(tx, actor, oc, status, sets = {}) {
     binds,
   );
   if (n !== 1) throw Errors.versionConflict();
+}
+
+/** OC print data (BR-OC-03): OC, breakdown, overridden prices (BR-OC-02), terms OC_TERMS. */
+export async function printData(tx, brnch, ocNo) {
+  const oc = await getOc(tx, brnch, ocNo);
+  return {
+    brnch,
+    oc,
+    breakdown: ocBreakdown(oc.prices, oc.qtyTon),
+    overridden: oc.masterPrices ? overriddenFields(oc.masterPrices, oc.prices) : [],
+    terms: await printTexts(tx, brnch, 'OC_TERMS'),
+  };
 }
 
 /** Price breakdown for proposed prices (no save). */
