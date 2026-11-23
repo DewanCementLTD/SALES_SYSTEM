@@ -482,6 +482,22 @@ export function PermitForm({ brnch, permit, can, mine, onSave, command }) {
             )}
             {permit &&
               mine &&
+              ['ISSUED', 'PARTLY_DISPATCHED'].includes(status) &&
+              can('permit.share') && (
+                <Button
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() =>
+                    run('send', () =>
+                      command('send', { channels: ['SMS', 'WHATSAPP', 'EMAIL'] }),
+                    ).catch(() => {})
+                  }
+                >
+                  <Send className="size-4" /> Send to dealer
+                </Button>
+              )}
+            {permit &&
+              mine &&
               !['CANCELLED', 'DISPATCHED'].includes(status) &&
               can('permit.cancel') && (
                 <Button variant="ghost" className="text-danger" onClick={() => setDialog('cancel')}>

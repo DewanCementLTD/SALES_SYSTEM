@@ -74,7 +74,11 @@ export default function PermitDetailPage() {
             toast.success(
               path === 'issue'
                 ? `Permit issued. Balance after: ${fmtPKR(res.balanceAfter, { brackets: true })}`
-                : DONE[path],
+                : path === 'send'
+                  ? res.outboxIds.length
+                    ? `Queued to the dealer (${res.outboxIds.length} message(s))`
+                    : 'No channel to send: the customer has no mobile number or e-mail'
+                  : DONE[path],
             );
             refresh();
           }}

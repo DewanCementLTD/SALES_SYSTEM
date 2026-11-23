@@ -83,6 +83,26 @@ describe('permits (P2-05)', () => {
     const bal = (await fin.get(`/api/v1/customers/2/${CUST}/balance`)).json();
     expect(bal.commitments.filter((c) => c.kind === 'PERMIT')).toHaveLength(2);
 
+    // BR-NTF-01: send / resend to the dealer on the chosen channels
+    await t.db.withTx((tx) =>
+      tx.exec(
+        `UPDATE CUSTOMER_INFO SET MOBILE_NO = '03001234567' WHERE BRNCH = 2 AND CUSTOMER_CODE = :c`,
+        { c: CUST },
+      ),
+    );
+    r = await fin.post(`${base}/send`, { channels: ['SMS'] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().outboxIds).toHaveLength(1);
+    const sms = await t.db.read((tx) =>
+      tx.one('SELECT RECIPIENT, PAYLOAD FROM NOTIFICATION_OUTBOX WHERE OUTBOX_ID = :i', {
+        i: r.json().outboxIds[0],
+      }),
+    );
+    expect(sms.RECIPIENT).toBe('03001234567');
+    expect(JSON.parse(sms.PAYLOAD).text).toContain(p.permitNo);
+    p = (await fin.get(base)).json();
+    expect(p.sentToDealerOn).toBeTruthy();
+
     // BR-PMT-06: reduce 2190 by 1,000 t → credit 25,070,000 and an adjustment row
     const line = p.areas.find((a) => a.areaDoc === '2190');
     r = await fin.post(
@@ -133,6 +153,8 @@ describe('permits (P2-05)', () => {
     );
     p = (await fin.get(base)).json();
     expect(p).toMatchObject({ status: 'DRAFT', cfoReqId: r.json().requestId });
+    // a draft is not sent to the dealer
+    expect((await fin.post(`${base}/send`, { channels: ['SMS'] })).statusCode).toBe(409);
   });
 
   it('legacy permits read as issued; branch scope', async () => {

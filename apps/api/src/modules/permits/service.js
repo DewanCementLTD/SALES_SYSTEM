@@ -676,3 +676,31 @@ export async function cancelPermit(tx, actor, brnch, permitNo, rowVer, reason) {
 }
 
 export { keyOf };
+
+/**
+ * Send / resend an issued permit to the dealer (BR-NTF-01, PERMIT_ISSUED template) on the chosen
+ * channels; delivery by the notification processors (P2-09).
+ */
+export async function sendPermit(tx, actor, brnch, permitNo, channels) {
+  const p = await getPermit(tx, brnch, permitNo);
+  if (!['ISSUED', 'PARTLY_DISPATCHED'].includes(p.status))
+    throw Errors.invalidState(
+      `Permit ${permitNo} is ${p.status}: only an open issued permit is sent`,
+    );
+  const ids = await notifyDealer(tx, {
+    brnch,
+    event: 'PERMIT_ISSUED',
+    docKey: keyOf(brnch, permitNo),
+    customerCode: p.customerCode,
+    vars: { PERMIT_NO: permitNo, QTY: dec(p.qtyTon).toFixed(2), PRODUCT: p.productCode },
+    now: actor.now,
+    channels,
+    resend: true,
+  });
+  await tx.exec(
+    'UPDATE PERMIT_MST_CITY SET SENT_TO_DEALER_ON = :now WHERE BRNCH = :b AND PERMIT_NO = :n',
+    { now: actor.now, b: brnch, n: permitNo },
+  );
+  await audit(tx, actor, brnch, permitNo, 'SEND', { newValues: { channels } });
+  return { outboxIds: ids };
+}

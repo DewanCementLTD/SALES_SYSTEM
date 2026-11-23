@@ -263,6 +263,14 @@ export default async function permitRoutes(app) {
     zPermitFull,
   );
   command(
+    'send',
+    P.permit.share,
+    z.object({ channels: z.array(z.enum(['SMS', 'WHATSAPP', 'EMAIL'])).min(1) }),
+    'Send / resend an issued permit to the dealer (queued; BR-NTF-01)',
+    (tx, a, b, n, r) => svc.sendPermit(tx, a, b, n, r.body.channels),
+    z.object({ outboxIds: z.array(z.number()) }),
+  );
+  command(
     'cancel',
     P.permit.cancel,
     z.object({ reason: zReason }),
