@@ -30,3 +30,12 @@ test('P2-06: outstanding DOs → DO detail with print, hold and cancel actions',
   await expect(page.getByRole('button', { name: 'Cancel DO' })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/27-do-detail.png` });
 });
+
+test('P2-08: cancellation advices list orders and receipts', async ({ page }) => {
+  await login(page);
+  await page.goto('/orders/cancellations');
+  await expect(page.getByRole('heading', { level: 1, name: 'Cancellation advices' })).toBeVisible();
+  await expect(page.getByRole('cell').first()).toBeVisible();
+  await page.getByRole('tab', { name: 'Receipts (BRV)' }).click();
+  await expect(page).toHaveURL(/kind=receipt/);
+});

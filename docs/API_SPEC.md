@@ -364,6 +364,8 @@ Statement (built 23 Nov 2026): `GET /ledger/{brnch}/{customerCode}?type=DC|DO&fr
 | GET/POST/PUT | `/targets`, `/targets/{brnch}/{serno}`                                                      | `target.view` / `target.update`      |                                                                                               |
 | GET          | `/targets/{brnch}/{serno}/achievement`                                                      | `target.view`                        |                                                                                               |
 
+Cancellation advices (P2-08, built 23 Nov 2026): `GET /cancellations?kind=order|receipt&brnch=` (`do.view` / `brv.view`) → paged `{ kind, adviceNo, date, customerCode, customerName, amount, … }`. Advices are written by the cancel / bounce commands; BRV bounce responses include `impact.adviceNo`.
+
 ## 15. Approvals & notifications
 
 | Method | Path                                                                                | Permission            | Notes                                                                                             |

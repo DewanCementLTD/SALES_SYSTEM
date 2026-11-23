@@ -2,6 +2,7 @@
 import approvalRoutes from './approvals/routes.js';
 import auditRoutes from './audit/routes.js';
 import brvRoutes from './brv/routes.js';
+import cancellationRoutes from './cancellations/routes.js';
 import authRoutes from './auth/routes.js';
 import customerRoutes from './customers/routes.js';
 import doRoutes from './do/routes.js';
@@ -42,4 +43,5 @@ export async function registerModules(app) {
   await app.register(ocRoutes, { prefix: '/api/v1' });
   await app.register(doRoutes, { prefix: '/api/v1' });
   await app.register(permitRoutes, { prefix: '/api/v1' });
+  await app.register(cancellationRoutes, { prefix: '/api/v1' });
 }

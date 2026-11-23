@@ -242,7 +242,11 @@ export default async function brvRoutes(app) {
     svc.bounceBrv,
     z.object({
       brv: zBrv,
-      impact: z.object({ releasedOcs: z.array(z.string()), confirmedOcs: z.array(z.string()) }),
+      impact: z.object({
+        releasedOcs: z.array(z.string()),
+        confirmedOcs: z.array(z.string()),
+        adviceNo: z.string().optional(),
+      }),
     }),
   );
   command(

@@ -56,6 +56,7 @@ export const NAV = [
         href: '/orders/cancellations',
         perm: ['oc.cancel', 'do.cancel'],
         phase: 'P2',
+        built: true,
       },
     ],
   },

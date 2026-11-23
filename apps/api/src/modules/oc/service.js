@@ -21,6 +21,7 @@ import {
 import { Errors } from '../../lib/errors.js';
 import { loadRequest, onApproved, onRejected, requestApproval } from '../approvals/service.js';
 import { recordAudit } from '../audit/service.js';
+import { writeOrderAdvice } from '../cancellations/service.js';
 import * as balance from '../ledger/balance.js';
 import * as ledger from '../ledger/service.js';
 import { nextNumber } from '../numbering/service.js';
@@ -512,7 +513,17 @@ export async function cancelOc(tx, actor, brnch, ocNo, rowVer, reason) {
   if (oc.dos.some((d) => dec(d.dispatchedTon).gt(0)))
     throw Errors.rule('BR-OC-08', 'A DO of this OC has dispatches: cancel the open DOs instead');
   const today = businessDate(actor.now);
+  const adviceLines = [];
   for (const d of oc.dos.filter((x) => ['ISSUED', 'ON_HOLD'].includes(x.status))) {
+    adviceLines.push({
+      doNo: d.doNo,
+      doType: d.doType,
+      productCode: oc.productCode,
+      issueDate: oc.orderDate,
+      qtyTon: d.qtyTon,
+      ocNo,
+      amount: d.value ?? '0',
+    });
     await tx.exec(
       `UPDATE DELIVERY_ORDER SET DOC_STATUS = 'CANCELLED', CANCEL_CODE = 'Y', CANCEL_REASON = :r,
          CANCELLED_BY = :usr, CANCELLED_ON = :now, CANCEL_DATE = :now, ROW_VER = ROW_VER + 1,
@@ -545,6 +556,8 @@ export async function cancelOc(tx, actor, brnch, ocNo, rowVer, reason) {
       ]);
     }
   }
+  // PRD 4.14 / P2-08: one order cancellation advice for the DOs of the OC
+  await writeOrderAdvice(tx, actor, { brnch, customerCode: oc.customerCode, lines: adviceLines });
   // release BRV money applied to this OC
   for (const l of oc.brvs) {
     await tx.exec(

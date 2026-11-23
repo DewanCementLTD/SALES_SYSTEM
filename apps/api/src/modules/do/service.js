@@ -15,6 +15,7 @@ import { Errors } from '../../lib/errors.js';
 import { paginate } from '../../lib/oracle/paginate.js';
 import { onApproved, onRejected, requestApproval } from '../approvals/service.js';
 import { recordAudit } from '../audit/service.js';
+import { writeOrderAdvice } from '../cancellations/service.js';
 import * as ledger from '../ledger/service.js';
 import { enqueue } from '../outbox/service.js';
 
@@ -221,7 +222,23 @@ async function applyCancel(tx, actor, d, reason) {
       },
     ]);
   }
-  await audit(tx, actor, d, 'CANCEL', { reason, newValues: { released } });
+  // PRD 4.14 / P2-08: order cancellation advice
+  const adviceNo = await writeOrderAdvice(tx, actor, {
+    brnch: d.brnch,
+    customerCode: d.customerCode,
+    lines: [
+      {
+        doNo: d.doNo,
+        doType: d.doType,
+        productCode: d.productCode,
+        issueDate: d.issueDate,
+        qtyTon: d.remainingTon,
+        ocNo: d.ocNo,
+        amount: released,
+      },
+    ],
+  });
+  await audit(tx, actor, d, 'CANCEL', { reason, newValues: { released, adviceNo } });
   return released;
 }
 

@@ -4,6 +4,7 @@
 import { MASTERS, canVerify, checkTransition, dec, fiscalYearOf, narration } from '@dcl/shared';
 import { Errors } from '../../lib/errors.js';
 import { recordAudit } from '../audit/service.js';
+import { writeReceiptAdvice } from '../cancellations/service.js';
 import * as ledger from '../ledger/service.js';
 import { refExists } from '../masters/repo.js';
 import { nextNumber } from '../numbering/service.js';
@@ -226,6 +227,15 @@ export async function bounceBrv(tx, actor, brnch, receiptNo, rowVer, { reason, r
     releasedOcs: released.map((o) => o.ocNo),
     confirmedOcs: ocs.filter((o) => ['CONFIRMED', 'CLOSED'].includes(o.status)).map((o) => o.ocNo),
   };
+  // P2-08: receipt cancellation advice (legacy CANCEL_TYPE 'B' = bounce)
+  impact.adviceNo = await writeReceiptAdvice(tx, actor, {
+    brnch,
+    customerCode: brv.customerCode,
+    receiptNo,
+    amount: brv.amount,
+    kind: 'B',
+    remarks: reason,
+  });
   await audit(tx, actor, brnch, receiptNo, 'BOUNCE', {
     reason,
     newValues: { returnDate, ...impact },
@@ -255,6 +265,14 @@ export async function cancelBrv(tx, actor, brnch, receiptNo, rowVer, reason) {
     },
   });
   if (n !== 1) throw Errors.versionConflict();
+  await writeReceiptAdvice(tx, actor, {
+    brnch,
+    customerCode: brv.customerCode,
+    receiptNo,
+    amount: brv.amount,
+    kind: 'C',
+    remarks: reason,
+  });
   await audit(tx, actor, brnch, receiptNo, 'CANCEL', { reason });
   return getBrv(tx, brnch, receiptNo);
 }

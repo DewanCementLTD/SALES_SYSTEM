@@ -29,6 +29,7 @@ export const qk = {
   brv: (brnch, no) => ['brv', 'detail', Number(brnch), String(no)],
   ocs: (params) => ['oc', 'list', params],
   dos: (params) => ['do', 'list', params],
+  cancellations: (params) => ['cancellations', params],
   permits: (params) => ['permits', 'list', params],
   permit: (brnch, no) => ['permits', 'detail', Number(brnch), String(no)],
   do: (brnch, type, no) => ['do', 'detail', Number(brnch), type, String(no)],

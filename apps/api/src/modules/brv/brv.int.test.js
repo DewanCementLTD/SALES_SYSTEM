@@ -104,6 +104,15 @@ describe('BRV (P2-04)', () => {
       impact: { releasedOcs: [], confirmedOcs: [] },
     });
     expect(await dcBalance()).toBe('0.00');
+    // P2-08: receipt cancellation advice continues the legacy YYYY-NNNN series
+    expect(bounce.json().impact.adviceNo).toMatch(/^2027-\d{4}$/);
+    expect(Number(bounce.json().impact.adviceNo.slice(5))).toBeGreaterThan(22);
+    const adv = (await checker.get('/api/v1/cancellations?kind=receipt&pageSize=5')).json();
+    expect(adv.items[0]).toMatchObject({
+      kind: 'BOUNCE',
+      adviceNo: bounce.json().impact.adviceNo,
+      amount: '600000.00',
+    });
   });
 
   it('BR-BRV-06: cancel while entered; clear after verification', async () => {

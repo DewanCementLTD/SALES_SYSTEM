@@ -98,6 +98,15 @@ describe('DO (P2-06)', () => {
     });
     // 25 t undispatched × 24,400 = 610,000 back to the DO ledger
     expect(await doLedger()).toBe('244000.00');
+    // P2-08: order cancellation advice for the cancelled quantity
+    const adv = (await fin.get('/api/v1/cancellations?kind=order&pageSize=3')).json();
+    expect(adv.items[0]).toMatchObject({
+      kind: 'ORDER',
+      customerCode: CUST,
+      amount: '610000.00',
+      qtyTon: '25.00',
+      lines: 1,
+    });
   });
 
   it('print and send are queued; branch scope', async () => {
