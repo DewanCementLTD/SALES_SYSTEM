@@ -7,7 +7,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "agent:dev": "node --watch src/index.js",
     "test": "vitest run",
     "test:unit": "vitest run"
   },

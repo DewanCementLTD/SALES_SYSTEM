@@ -47,4 +47,4 @@ Only pages from `allowedOrigins` may connect, so another web site open on the PC
 
 ## Develop
 
-`pnpm --filter @dcl/weighbridge-agent test`. A full run against a local API: register a device with `{ "source": { "type": "simulator" }, "parser": "simulator" }`, then `AGENT_CONFIG=agent.config.json DEVICE_SECRET=... pnpm --filter @dcl/weighbridge-agent start`.
+`pnpm --filter @dcl/weighbridge-agent test`. A full run against a local API: register a device with `{ "source": { "type": "simulator" }, "parser": "simulator" }`, then `AGENT_CONFIG=agent.config.json DEVICE_SECRET=... pnpm --filter @dcl/weighbridge-agent start` (or `agent:dev` to restart on changes; `pnpm dev` does not start the agent, it runs on the weighbridge PC)`.
