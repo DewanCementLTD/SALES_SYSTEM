@@ -15,7 +15,7 @@ export function PageHeader({ icon: Icon, title, subtitle, crumbs = [], actions }
           <Home className="size-4" aria-hidden="true" />
         </Link>
         {crumbs.map((c, i) => (
-          <span key={c.label} className="flex items-center gap-1.5">
+          <span key={`${i}-${c.label}`} className="flex items-center gap-1.5">
             <ChevronRight className="size-3.5" aria-hidden="true" />
             {c.href && i < crumbs.length - 1 ? (
               <Link href={c.href} className="hover:text-foreground">
