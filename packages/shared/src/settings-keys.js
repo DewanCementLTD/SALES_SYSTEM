@@ -253,6 +253,14 @@ const DEFS = [
     perBranch: true,
   },
   {
+    key: 'WORKER_HOST',
+    def: '',
+    type: 'STRING',
+    rule: 'ARCHITECTURE §3',
+    descr:
+      'Computer name of the only PC allowed to run the background worker (prints, messages, FBR); empty = any',
+  },
+  {
     key: 'FBR_SELLER_NAME',
     def: '',
     type: 'STRING',

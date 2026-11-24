@@ -1,12 +1,14 @@
 // Background worker (TASKS P0-13): outbox relay → BullMQ queues → processors.
 // Processors are idempotent per outbox id (jobId `outbox-<id>`); retries with exponential back-off;
 // a job that fails its last attempt marks the outbox row FAILED so it shows on the admin screen.
+import { hostname } from 'node:os';
 import { Queue, Worker } from 'bullmq';
 import pino from 'pino';
 import { loadConfig } from '@dcl/api/config';
 import { createDb } from '@dcl/api/lib/oracle/db';
 import { expireOverdue } from '@dcl/api/modules/approvals/service';
 import { submitInvoice } from '@dcl/api/modules/fbr/service';
+import { SettingsReader } from '@dcl/api/modules/settings/service';
 import {
   QUEUE_NAMES,
   markDeliveryFailed,
@@ -25,6 +27,28 @@ const log = pino({
   base: { app: 'worker' },
 });
 const db = await createDb(config);
+
+// Only one PC may run the worker against this database (setting WORKER_HOST, company level):
+// another PC's worker would take jobs and keep their PDFs on its own disk.
+const me = hostname();
+async function allowedHere() {
+  const want = await db.read((tx) => new SettingsReader(tx).get(0, 'WORKER_HOST'), {
+    usrid: 'worker',
+    action: 'worker.host',
+  });
+  return { ok: !want || String(want).trim().toUpperCase() === me.toUpperCase(), want };
+}
+{
+  const h = await allowedHere();
+  if (!h.ok) {
+    log.warn(
+      { thisPc: me, workerHost: h.want },
+      'not starting: the worker runs only on the PC named in setting WORKER_HOST',
+    );
+    await db.close(5);
+    process.exit(0);
+  }
+}
 const redisUrl = new URL(config.REDIS_URL);
 const connection = {
   host: redisUrl.hostname,
@@ -114,6 +138,11 @@ async function housekeepingLoop() {
   while (!stopping) {
     try {
       const now = systemClock.now();
+      if (!(await allowedHere()).ok) {
+        log.warn({ thisPc: me }, 'WORKER_HOST now names another PC: stopping');
+        await shutdown('WORKER_HOST');
+        return;
+      }
       const recovered = await recoverStuck(db, now);
       if (recovered) log.warn({ recovered }, 'outbox rows recovered after worker crash');
       const expired = await db.withTx((tx) => expireOverdue(tx, now), {
