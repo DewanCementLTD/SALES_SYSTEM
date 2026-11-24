@@ -1,6 +1,13 @@
 // Runtime configuration from environment variables (documented in .env.example).
 // Validated once at start-up; the app refuses to start with a bad configuration.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+
+// A relative STORAGE_DIR is taken from the repo root (where .env lives), not from each app's working
+// directory: under `pnpm dev` the API runs in apps/api and the worker in apps/worker, and both must
+// see the same files (the worker writes PDFs, the API serves them).
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const bool = z
   .enum(['true', 'false', '1', '0', 'Y', 'N'])
@@ -27,7 +34,10 @@ const schema = z.object({
   WEB_ORIGIN: z.string().url().default('http://localhost:3200'),
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3200'),
   COOKIE_SECURE: bool.default('false'),
-  STORAGE_DIR: z.string().default('./storage'),
+  STORAGE_DIR: z
+    .string()
+    .default('./storage')
+    .transform((p) => path.resolve(REPO_ROOT, p)),
 });
 
 /** @typedef {z.infer<typeof schema>} AppConfig */
