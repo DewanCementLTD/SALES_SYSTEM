@@ -57,3 +57,28 @@ test('P3-08: exit screen refuses a QR that is not a gate pass', async ({ page })
   ).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/35-exit.png` });
 });
+
+test('P3-10: offline sync screen lists conflicts and what waits on this tablet', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto('/plant/sync');
+  await expect(page.getByRole('heading', { level: 1, name: 'Offline sync' })).toBeVisible();
+  await expect(page.getByText('Nothing waiting.')).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/36-offline-sync.png` });
+});
+
+test('P3-10: offline gate-in checks QRs against the cached documents (BR-OFF-02)', async ({
+  page,
+  context,
+}) => {
+  await login(page);
+  await page.goto('/plant/gate-in');
+  await expect(page.getByRole('heading', { level: 1, name: 'Gate-in' })).toBeVisible();
+  await context.setOffline(true);
+  await expect(page.getByText('Offline: work is saved on this tablet.')).toBeVisible();
+  await page.getByLabel('Scan the DO QR (or paste it)').fill('DCL|DO|1|OS-1|1|abc');
+  await page.getByRole('button', { name: 'Check' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /offline check/ })).toBeVisible();
+  await context.setOffline(false);
+});

@@ -8,6 +8,7 @@ import { DoorOpen, Loader2, QrCode, Search, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { QR_REASONS, offlineQrCheck } from '@dcl/shared';
 import { ReasonDialog } from '@/components/common/dialogs';
 import { PageHeader, ProblemAlert, Section, StatusBadge } from '@/components/common/page';
 import { Button } from '@/components/ui/button';
@@ -20,7 +21,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { OfflineBanner } from '@/components/plant/offline-banner';
 import { api } from '@/lib/api';
+import { cachedDocs, isOffline, queueEvent } from '@/lib/offline';
 import { fmtQty } from '@/lib/format';
 import { useSession } from '@/lib/session';
 
@@ -74,6 +77,18 @@ export default function GateInPage() {
       addCard(await api('/plant/scan', { method: 'POST', body: { qr: scanText.trim() } }));
       setScanText('');
     } catch (err) {
+      if (isOffline(err)) {
+        // BR-OFF-02: check the signed QR against the cached open documents
+        const cache = await cachedDocs(s.branch);
+        const r = offlineQrCheck(scanText.trim(), cache?.entries ?? [], s.branch);
+        if (r.ok) {
+          const [doType, doNo] = r.entry.docNo.split('-');
+          addCard({ ...r.entry, doType, doNo });
+          setScanText('');
+          toast.info('Offline: checked against the cached documents');
+        } else setError({ message: `${QR_REASONS[r.reason]} (offline check)` });
+        return;
+      }
       const reason = err.data?.reason;
       setError(
         reason ? { ...err, message: `${err.message} (${REASON_TEXT[reason] ?? reason})` } : err,
@@ -95,33 +110,43 @@ export default function GateInPage() {
     e.preventDefault();
     setBusy('in');
     setError(null);
-    try {
-      const gp = await api('/plant/gate-passes', {
-        method: 'POST',
-        headers: { 'idempotency-key': crypto.randomUUID() },
-        body: {
-          route: 'DO',
-          packingType,
-          vehicleNo,
-          driver,
-          transpCode,
-          ...(biltyNo.trim() ? { biltyNo: biltyNo.trim() } : {}),
-          clientId: crypto.randomUUID(),
-          docs: docs.map((d) =>
-            packingType === 'BAG'
-              ? { doType: d.doType, doNo: d.doNo, plannedBags: Number(d.plannedBags) }
-              : { doType: d.doType, doNo: d.doNo, plannedTon: String(d.plannedTon).trim() },
-          ),
-        },
-      });
-      setDone(gp);
+    const clientId = crypto.randomUUID();
+    const body = {
+      route: 'DO',
+      packingType,
+      vehicleNo,
+      driver,
+      transpCode,
+      ...(biltyNo.trim() ? { biltyNo: biltyNo.trim() } : {}),
+      docs: docs.map((d) =>
+        packingType === 'BAG'
+          ? { doType: d.doType, doNo: d.doNo, plannedBags: Number(d.plannedBags) }
+          : { doType: d.doType, doNo: d.doNo, plannedTon: String(d.plannedTon).trim() },
+      ),
+    };
+    const reset = () => {
       setDocs([]);
       setVehicleNo('');
       setDriver(blankDriver);
       setBiltyNo('');
+    };
+    try {
+      const gp = await api('/plant/gate-passes', {
+        method: 'POST',
+        headers: { 'idempotency-key': crypto.randomUUID() },
+        body: { ...body, clientId },
+      });
+      setDone(gp);
+      reset();
       toast.success(`Gate pass ${gp.gpId} · DC ${gp.dcNo} issued`);
     } catch (err) {
-      setError(err);
+      if (isOffline(err)) {
+        // BR-OFF-03: saved here; the DC number comes when the event syncs
+        await queueEvent('GATE_IN', body, clientId);
+        setDone({ offline: true, clientId, vehicleNo, plannedKg: planned * 1000 });
+        reset();
+        toast.warning('Offline: gate-in saved on this tablet; the DC number comes after sync');
+      } else setError(err);
     } finally {
       setBusy(null);
     }
@@ -140,6 +165,7 @@ export default function GateInPage() {
         subtitle="Scan the DO, plan the load, record the truck and driver. The gate pass and DC are issued here."
         crumbs={[{ label: 'Plant' }, { label: 'Gate-in' }]}
       />
+      <OfflineBanner />
       <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="space-y-4">
           <Section title="1. Documents">
@@ -355,8 +381,17 @@ export default function GateInPage() {
             {done && (
               <div className="mt-4 rounded-md border bg-success/10 p-3 text-sm">
                 <div className="font-medium">
-                  Gate pass {done.gpId} · DC {done.dcNo}{' '}
-                  <StatusBadge tone="success">{done.status.toLowerCase()}</StatusBadge>
+                  {done.offline ? (
+                    <>
+                      Saved offline · ref {done.clientId.slice(0, 8)}{' '}
+                      <StatusBadge tone="warning">waiting to sync</StatusBadge>
+                    </>
+                  ) : (
+                    <>
+                      Gate pass {done.gpId} · DC {done.dcNo}{' '}
+                      <StatusBadge tone="success">{done.status.toLowerCase()}</StatusBadge>
+                    </>
+                  )}
                 </div>
                 <div className="text-muted-foreground">
                   {done.vehicleNo} · {fmtQty(done.plannedKg / 1000)} t planned. Send the truck to

@@ -21,7 +21,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { OfflineBanner } from '@/components/plant/offline-banner';
 import { api } from '@/lib/api';
+import { isOffline, queueEvent } from '@/lib/offline';
 import { fmtQty } from '@/lib/format';
 import { printAndOpen } from '@/lib/print';
 import { useSession } from '@/lib/session';
@@ -66,15 +68,27 @@ export default function WeighingPage() {
           : null;
 
   const send = async (path, body) => {
-    const r = await api(`/plant/gate-passes/${gpId}/${path}`, {
-      method: 'POST',
-      headers: { 'idempotency-key': crypto.randomUUID() },
-      body,
-    });
+    let r;
+    try {
+      r = await api(`/plant/gate-passes/${gpId}/${path}`, {
+        method: 'POST',
+        headers: { 'idempotency-key': crypto.randomUUID() },
+        body,
+      });
+    } catch (e) {
+      // BR-OFF-01: tare / gross are kept on this tablet and synced later
+      if (isOffline(e) && (path === 'tare' || path === 'gross')) {
+        await queueEvent(path === 'tare' ? 'TARE' : 'GROSS', { gpId, ...body });
+        toast.warning(`Offline: ${path} saved on this tablet; it is sent when the network is back`);
+        return { offline: true, gatePass: g, warnings: [], invoices: [], invoiceProblem: null };
+      }
+      throw e;
+    }
     qc.invalidateQueries({ queryKey: ['plant'] });
     return r;
   };
   const after = (path, r) => {
+    if (r.offline) return;
     if (path === 'tare') {
       toast.success(`Tare ${kgFmt(r.gatePass.tareKg)} saved`);
       for (const w of r.warnings ?? []) toast.warning(w);
@@ -113,6 +127,16 @@ export default function WeighingPage() {
     setError(null);
     try {
       const c = await agent.capture();
+      if (!c.uploaded && (step === 'tare' || step === 'gross')) {
+        // the agent keeps the signed reading and uploads it; the event follows it (BR-OFF-01)
+        await queueEvent(step === 'tare' ? 'TARE' : 'GROSS', {
+          gpId,
+          deviceId: c.deviceId,
+          readingId: c.readingId,
+        });
+        toast.warning('Network down: the weight is saved and will be applied when it is back');
+        return;
+      }
       if (!c.uploaded)
         throw new Error(
           'The reading is saved on the weighbridge PC but not yet sent (network). Try again in a moment.',
@@ -151,6 +175,7 @@ export default function WeighingPage() {
         subtitle="Tare when the truck comes in empty, gross when it is loaded. Weights come from the weighbridge; manual entry only with permission and a reason."
         crumbs={[{ label: 'Plant' }, { label: 'Weighing' }]}
       />
+      <OfflineBanner />
       <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
         <Section title="Trucks">
           <ul className="space-y-1">

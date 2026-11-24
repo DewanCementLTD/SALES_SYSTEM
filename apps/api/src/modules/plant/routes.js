@@ -1,6 +1,6 @@
 // /api/v1/plant/* (API_SPEC §11, TASKS P3). Device-callable routes are marked `device: true`
 // (PERMISSIONS P-6: only their own branch).
-import { P, verifyQr, zGateIn, zReason } from '@dcl/shared';
+import { P, verifyQr, zGateIn, zReason, zSyncBatch } from '@dcl/shared';
 import { z } from 'zod';
 import { Errors } from '../../lib/errors.js';
 import { enqueue } from '../outbox/service.js';
@@ -12,6 +12,7 @@ import * as gate from './gate.js';
 import * as print from './print.js';
 import * as invoice from './invoice.js';
 import * as scan from './scan.js';
+import * as sync from './sync.js';
 import * as weighing from './weighing.js';
 
 const zReading = z.object({
@@ -633,5 +634,120 @@ export default async function plantRoutes(app) {
       }, request.txOpts('plant.dc-print'));
       return reply.status(202).send(res);
     },
+  );
+
+  // ---- offline sync (P3-10) ----
+  app.post(
+    '/plant/sync',
+    {
+      config: {
+        permission: [P.sync.push, P.gate.in, P.weigh.capture, P.weigh.manual, P.gate.exit],
+        device: true,
+      },
+      schema: {
+        tags,
+        summary:
+          'Offline events in order (BR-OFF-01…04): [{ clientId, type: GATE_IN|TARE|GROSS|EXIT, payload, deviceTime }] → APPLIED | DUPLICATE | CONFLICT per event',
+        body: zSyncBatch,
+        response: {
+          200: z.object({
+            results: z.array(
+              z.object({
+                clientId: z.string(),
+                status: z.enum(['APPLIED', 'DUPLICATE', 'CONFLICT']),
+                result: z.unknown().optional(),
+                conflictId: z.number().nullable().optional(),
+                error: z
+                  .object({ code: z.string(), detail: z.string(), ruleId: z.string().nullable() })
+                  .optional(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    async (request) => {
+      const dev = request.device;
+      const brnch = dev?.brnch ?? request.session.brnch;
+      const perms = dev ? new Set() : await request.authz.permissions(brnch);
+      const results = await sync.pushEvents(
+        app.db,
+        {
+          actor: {
+            usrid: dev ? `DEV ${dev.deviceId}`.slice(0, 20) : request.session.usrid,
+            deviceId: dev?.deviceId ?? null,
+            now: app.clock.now(),
+            audit: request.ctx(),
+          },
+          brnch,
+          may: (p) => perms.has(p),
+          isDevice: Boolean(dev),
+          deviceType: dev?.deviceType ?? null,
+          txOpts: request.txOpts('plant.sync'),
+        },
+        request.body.events,
+      );
+      return { results };
+    },
+  );
+
+  const zConflict = z.object({
+    conflictId: z.number(),
+    brnch: z.number(),
+    deviceId: zN,
+    clientId: z.string(),
+    eventType: z.string(),
+    payload: z.unknown(),
+    deviceTime: z.date().nullable(),
+    errorCode: z.string(),
+    errorMsg: zN,
+    status: z.string(),
+    resolution: zN,
+    resolvedBy: zN,
+    resolvedOn: z.date().nullable(),
+    createdOn: z.date(),
+  });
+  app.get(
+    '/plant/sync-conflicts',
+    {
+      config: { permission: P.sync.resolve },
+      schema: {
+        tags,
+        summary: 'Offline events the server could not apply (BR-OFF-04), newest first',
+        querystring: z.object({ status: z.enum(['OPEN', 'RESOLVED', 'DISCARDED']).optional() }),
+        response: { 200: z.object({ items: z.array(zConflict) }) },
+      },
+    },
+    async (request) => ({
+      items: await app.db.read(
+        (tx) => sync.listConflicts(tx, request.session.brnch, request.query.status),
+        request.txOpts('plant.sync-conflicts'),
+      ),
+    }),
+  );
+  app.post(
+    '/plant/sync-conflicts/:conflictId/resolve',
+    {
+      config: { permission: P.sync.resolve },
+      schema: {
+        tags,
+        summary: 'RETRY (apply again as me, after fixing the data) or DISCARD, with the reason',
+        params: z.object({ conflictId: z.coerce.number().int().positive() }),
+        body: z.object({ action: z.enum(['RETRY', 'DISCARD']), resolution: zReason }),
+        response: { 200: z.object({ conflict: zConflict, result: z.unknown() }) },
+      },
+    },
+    async (request) =>
+      app.db.withTx(
+        (tx) =>
+          sync.resolveConflict(
+            tx,
+            actor(request),
+            request.session.brnch,
+            request.params.conflictId,
+            request.body,
+          ),
+        request.txOpts('plant.sync-resolve'),
+      ),
   );
 }
