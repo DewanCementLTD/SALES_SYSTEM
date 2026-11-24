@@ -70,7 +70,7 @@ export async function storePdf(
       const id = await tx.nextId('SEQ_ATTACHMENT');
       await tx.exec(
         `INSERT INTO ATTACHMENT (ATT_ID, BRNCH, ENTITY, ENTITY_KEY, FILE_NAME, MIME_TYPE, SIZE_BYTES, STORAGE_PATH, SHA256, UPLOADED_BY, UPLOADED_ON)
-         VALUES (:id, :b, :e, :k, :f, 'application/pdf', :sz, :p, :sha, :by, :now)`,
+         VALUES (:id, :b, :e, :k, :f, 'application/pdf', :sz, :p, :sha, :ub, :now)`,
         {
           id,
           b: brnch,
@@ -80,7 +80,7 @@ export async function storePdf(
           sz: buffer.length,
           p: rel.replace(/\\/g, '/'),
           sha,
-          by,
+          ub: by, // :by is reserved in Oracle (ORA-01745)
           now,
         },
       );
