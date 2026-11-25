@@ -27,3 +27,4 @@ export * from './gate.js';
 export * from './invoice.js';
 export * from './fbr.js';
 export * from './sync.js';
+export * from './note.js';

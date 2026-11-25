@@ -21,6 +21,7 @@ Database: Oracle (target 19c; SQL must stay 11g-compatible). Schema owner on the
 | Rate sheet line ids         | `db/migrations/009_RATE_SHEET_SEQ.sql`                              | SEQ_AREA_RATES_P / SEQ_AREA_RATES_D start above the legacy maxima; sheet number = DOC_SEQUENCE RSH                                                                                                                                                                                              |
 | Weighbridge readings        | `db/migrations/016_DEVICE_READING.sql`                              | DEVICE_READING (PK DEVICE_ID, READING_ID): stable readings captured, signed and uploaded by the weighbridge agent before the weighing screen uses one for a tare/gross (WEIGH_TICKET needs the gate pass; its UK on DEVICE_ID + DEVICE_READING_ID keeps each reading single-use). Insert-only   |
 | DO adjustment advice        | `db/migrations/015_DO_ADJUST.sql`                                   | DO_ADJUSTMENT.ADJUST_REASON (reason of the advice; the legacy table has none) and index IX_DO_ADJ_DO (BRNCH, DO_NO, DOC_STATUS). Advice DOC_STATUS PENDING_APPROVAL → APPROVED / REJECTED (legacy rows read as APPROVED); approval rule DO_ADJUST seeded (approver Finance Manager, to confirm) |
+| Note type settings          | `db/migrations/019_NOTE_TYPE_SETTINGS.sql`                          | APP_SETTING NOTE_TYPE_SALES_RETURN = 006 for Karachi (its CREDIT_NOTE_TYPE codes differ from Hattar / BR-NOTE-01: 004 = COMMISSION there)                                                                                                                                                       |
 | Offline sync events         | `db/migrations/018_SYNC_EVENT.sql`                                  | SYNC_EVENT (PK CLIENT_ID): one row per offline event pushed to /plant/sync, status APPLIED or CONFLICT with the stored result, so replays return it (BR-OFF-04)                                                                                                                                 |
 | Truck exited templates      | `db/migrations/017_TRUCK_EXITED_TEMPLATES.sql`                      | Company MSG_TEMPLATE rows TRUCK_EXITED (SMS, WA, EMAIL) for the dealer message at exit (BR-EXIT-03)                                                                                                                                                                                             |
 | Dealer templates            | `db/migrations/014_DEALER_TEMPLATES.sql`                            | Company MSG_TEMPLATE rows for BRV_VERIFIED / DO_ISSUED / PERMIT_ISSUED (SMS, WA, EMAIL). MSG_TEMPLATE PK is (TEMPLATE_CODE, CHANNEL): a branch variant is stored as code `<CODE>@<brnch>` (e.g. `DO_ISSUED@2`) and wins for that branch                                                         |
@@ -199,23 +200,23 @@ Links to legacy tables are by column (no FK), because legacy rows break them; se
 
 ## 4. DOC_SEQUENCE document types
 
-| DOC_TYPE | Document              | Table / column                                                     |
-| -------- | --------------------- | ------------------------------------------------------------------ |
-| SRF      | Sales request         | SALES_REQUEST_MASTER.SRF_NO                                        |
-| OC       | Order confirmation    | ORDER_CONFIRM.ORDER_NO                                             |
-| BRV      | Bank receipt          | CASH_CHEQUE_RECEIPTS.RECEIPT_NO                                    |
-| DO       | Delivery order        | DELIVERY_ORDER.DEL_ORDER_NO                                        |
-| PMT      | Permit                | PERMIT_MST_CITY.PERMIT_NO                                          |
-| DC       | Delivery challan      | FH_DELIVERY_CHALLAN.DC_NO                                          |
-| DM       | Delivery memo         | FH_DELIVERY_MEMO.DM_NO                                             |
-| INV      | Sales invoice         | SALES_INVOICE.INVOICE_NO                                           |
-| CN / DN  | Credit / debit note   | CREDIT_NOTE.SRL_NO (one series, `DB_CR_CD` distinguishes)          |
-| OCA      | Order cancel advice   | ORDER_CANCEL_MASTER.OC_ADVISE_NO                                   |
-| RCX      | Receipt cancel        | RECEIPT_CANCEL_MASTER.CANCEL_NO                                    |
-| DOA      | DO adjustment advice  | DO_ADJUSTMENT.ADVICE_NO                                            |
-| INC      | Incentive run         | INCENTIVE.SRL_NO                                                   |
-| RSH      | City rate sheet       | AREA_RATES_M.SERNO (P1-07; seeded KHI 101, ISB 1942)               |
-| CLM      | Credit limit document | CREDIT_LIMITS_F.SERNO (P1-04; seeded from legacy max, Hattar 4565) |
+| DOC_TYPE | Document              | Table / column                                                                                                                       |
+| -------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| SRF      | Sales request         | SALES_REQUEST_MASTER.SRF_NO                                                                                                          |
+| OC       | Order confirmation    | ORDER_CONFIRM.ORDER_NO                                                                                                               |
+| BRV      | Bank receipt          | CASH_CHEQUE_RECEIPTS.RECEIPT_NO                                                                                                      |
+| DO       | Delivery order        | DELIVERY_ORDER.DEL_ORDER_NO                                                                                                          |
+| PMT      | Permit                | PERMIT_MST_CITY.PERMIT_NO                                                                                                            |
+| DC       | Delivery challan      | FH_DELIVERY_CHALLAN.DC_NO                                                                                                            |
+| DM       | Delivery memo         | FH_DELIVERY_MEMO.DM_NO                                                                                                               |
+| INV      | Sales invoice         | SALES_INVOICE.INVOICE_NO                                                                                                             |
+| CN / DN  | Credit / debit note   | CREDIT_NOTE.SRL_NO, own series per kind (`DB_CR_CD` C / D; legacy numbers repeat across C and D, PK BRNCH+SRL_NO+DB_CR_CD+NOTE_TYPE) |
+| OCA      | Order cancel advice   | ORDER_CANCEL_MASTER.OC_ADVISE_NO                                                                                                     |
+| RCX      | Receipt cancel        | RECEIPT_CANCEL_MASTER.CANCEL_NO                                                                                                      |
+| DOA      | DO adjustment advice  | DO_ADJUSTMENT.ADVICE_NO                                                                                                              |
+| INC      | Incentive run         | INCENTIVE.SRL_NO                                                                                                                     |
+| RSH      | City rate sheet       | AREA_RATES_M.SERNO (P1-07; seeded KHI 101, ISB 1942)                                                                                 |
+| CLM      | Credit limit document | CREDIT_LIMITS_F.SERNO (P1-04; seeded from legacy max, Hattar 4565)                                                                   |
 
 Migration seeds `LAST_NO` = max legacy number per (branch, year, type) so numbering continues (BR-NUM-04).
 
@@ -263,6 +264,7 @@ Until confirmed, `nextNumber` continues each counter from the raw legacy maximum
 | LOGIN_MAX_FAILS / LOGIN_LOCK_MIN | 5 / 15     | PRD 4.1                                                                                                                                                                                                                                                                                                                     |
 | PWD_LIFE_DAYS / PWD_HISTORY      | 90 / 5     | PRD 4.1                                                                                                                                                                                                                                                                                                                     |
 | FBR_ENV                          | SANDBOX    | per branch: also FBR_POS_ID, FBR_TOKEN_ENC, FBR_BASE_URL, FBR_SELLER_NTN, FBR_SELLER_STRN, FBR_SELLER_NAME, FBR_SELLER_PROVINCE, FBR_SELLER_ADDRESS, FBR_SALE_TYPE [Goods (FED in ST mode)], FBR_UOM [MT], FBR_HS_CODE, FBR_SCENARIO_ID (sandbox); secret settings (FBR_TOKEN_ENC) are stored AES-256-GCM encrypted (P3-07) |
+| NOTE_TYPE_SALES_RETURN           | 004        | per branch (OPEN-Q5): credit note type of a sales return, which must name an invoice of the customer; Karachi = 006 (migration 019)                                                                                                                                                                                         |
 | WORKER_HOST                      | (empty)    | company: computer name of the only PC allowed to run the background worker; a worker on any other PC stops at start-up (set to WIN-K31UU5J1DGN on 24 Nov 2026)                                                                                                                                                              |
 
 ## 6. Index plan (beyond 01/03/05)

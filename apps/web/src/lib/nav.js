@@ -188,7 +188,13 @@ export const NAV = [
         phase: 'P3',
         built: true,
       },
-      { label: 'Credit / debit notes', href: '/accounts/notes', perm: ['note.view'], phase: 'P4' },
+      {
+        label: 'Credit / debit notes',
+        href: '/accounts/notes',
+        perm: ['note.view'],
+        phase: 'P4',
+        built: true,
+      },
       {
         label: 'Balance transfers',
         href: '/accounts/transfers',

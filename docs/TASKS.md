@@ -87,7 +87,7 @@ Legend: **Deps** = tasks that must be done first · **Rules** = BUSINESS_RULES I
 
 ## P4 — Notes, transfers, incentives, targets
 
-- [ ] **P4-01 Credit/debit notes** — types 001–010, lines + WHT, approval, post, reverse, print/share; sales-return note linked to invoice (type 004). Rules: BR-NOTE-01…05.
+- [~] **P4-01 Credit/debit notes** — types 001–010, lines + WHT, approval, post, reverse, print/share; sales-return note linked to invoice (type 004). Rules: BR-NOTE-01…05. ◐ 25 Nov 2026 — `packages/shared/src/note.js` (totals with WHT, sales-return limit), `modules/notes` (draft with CN / DN number, submit → NOTE_POST → posted to both ledgers, cancel, reverse with a note of the other kind), migration 019 (Karachi sales-return type 006), Accounts › Credit / debit notes (list, new, note). Pending: print/share (with P5-08), FBR credit/debit note submission for sales returns of FBR-accepted invoices (PRAL DI note format to confirm). Open: Karachi's note type codes differ from BR-NOTE-01 (one list or per branch?), who posts (approval posts at once; `note.post` only when no rule applies)
 - [ ] **P4-02 Balance transfer** — one document, two postings. Rules: BR-NOTE-04.
 - [ ] **P4-03 Incentive schemes & runs** — scheme CRUD, preview, commit → DRAFT notes (008), duplicate-run guard. Rules: BR-INC-01/03.
 - [ ] **P4-04 Targets & monthly incentive** — targets per customer/area, achievement, slab run → notes (010). Rules: BR-INC-02.

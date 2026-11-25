@@ -12,6 +12,7 @@ import invoiceRoutes from './invoices/routes.js';
 import geoRoutes from './geo/routes.js';
 import ledgerRoutes from './ledger/routes.js';
 import masterRoutes from './masters/routes.js';
+import noteRoutes from './notes/routes.js';
 import notificationRoutes from './notifications/routes.js';
 import ocRoutes from './oc/routes.js';
 import outboxRoutes from './outbox/routes.js';
@@ -52,4 +53,5 @@ export async function registerModules(app) {
   await app.register(deviceRoutes, { prefix: '/api/v1' });
   await app.register(plantRoutes, { prefix: '/api/v1' });
   await app.register(invoiceRoutes, { prefix: '/api/v1' });
+  await app.register(noteRoutes, { prefix: '/api/v1' });
 }

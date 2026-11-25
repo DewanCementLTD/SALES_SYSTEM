@@ -253,6 +253,16 @@ const DEFS = [
     perBranch: true,
   },
   {
+    key: 'NOTE_TYPE_SALES_RETURN',
+    def: '004',
+    type: 'STRING',
+    rule: 'BR-NOTE-01',
+    descr:
+      'Credit note type of a sales return (linked to an invoice). Karachi keeps its own codes: 006 there (migration 019)',
+    openQ: 'Q5',
+    perBranch: true,
+  },
+  {
     key: 'WORKER_HOST',
     def: '',
     type: 'STRING',
