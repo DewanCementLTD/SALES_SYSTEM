@@ -7,6 +7,7 @@ import {
   OC_PRICE_FIELDS,
   OC_PRICE_LABELS,
   dec,
+  decOr,
   ocBreakdown,
   overriddenFields,
   splitSchedule,
@@ -174,7 +175,7 @@ export function OcView({ oc, can, mine, command, onChanged }) {
       return command('', parsed.data, 'PUT');
     }).catch(() => {});
   const short = bal.data?.shortfall && Number(bal.data.shortfall) > 0 ? bal.data.shortfall : null;
-  const linkTotal = links.reduce((s, l) => s.plus(dec(l.amount || 0)), dec(0));
+  const linkTotal = links.reduce((s, l) => s.plus(decOr(l.amount)), dec(0));
   const freeOf = (no) => oc.linkableBrvs.find((b) => b.receiptNo === no)?.free;
 
   return (
@@ -572,7 +573,7 @@ export function OcView({ oc, can, mine, command, onChanged }) {
                 <td
                   className={cn(
                     'px-3 py-2 text-right tabular-nums',
-                    qtyOk && !total.eq(dec(qty)) && 'text-danger',
+                    qtyOk && !total.eq(decOr(qty)) && 'text-danger',
                   )}
                 >
                   {fmtQty(total.toFixed(3))} t

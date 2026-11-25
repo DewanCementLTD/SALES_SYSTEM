@@ -17,6 +17,24 @@ export function dec(v) {
   return new D(v);
 }
 
+/**
+ * Forgiving dec() for on-screen previews of what the user is still typing ("24,300", "12.",
+ * "abc"): thousands separators are ignored and anything else that is not a number counts as
+ * `fallback`. Never use it for business math: the API validates and uses dec().
+ * @param {unknown} v
+ * @param {Decimal.Value} [fallback]
+ */
+export function decOr(v, fallback = 0) {
+  if (v === null || v === undefined) return new D(fallback);
+  const t = typeof v === 'string' ? v.replace(/[,\s]/g, '').replace(/\.$/, '') : v;
+  try {
+    const d = dec(/** @type {Decimal.Value} */ (t));
+    return d.isFinite() ? d : new D(fallback);
+  } catch {
+    return new D(fallback);
+  }
+}
+
 /** Round to 2 decimals, half-up. */
 export const roundMoney = (v) => dec(v).toDecimalPlaces(2, D.ROUND_HALF_UP);
 /** Round to 3 decimals (tons), half-up. */

@@ -3,7 +3,7 @@
 // City-wise permit (PRD 4.7, mockup page 5 layout; rules win: no expiry / 14-day block, valid from
 // = issue date, rates from the rate sheet — BR-PMT-01/04). Header + area grid + balance panel and
 // actions: save draft, issue, send to CFO, balance override, adjust quantity, cancel, print.
-import { areaAmount, businessDate, dec, permitValue } from '@dcl/shared';
+import { areaAmount, businessDate, dec, decOr, permitValue } from '@dcl/shared';
 import { useQuery } from '@tanstack/react-query';
 import {
   Loader2,
@@ -49,6 +49,7 @@ export const PERMIT_TONE = {
 };
 
 const okQty = (q) => /^\d+(\.\d{1,3})?$/.test(q) && dec(q).gt(0);
+const okRate = (r) => /^\d+(\.\d{1,2})?$/.test(String(r ?? ''));
 
 /**
  * @param {{ brnch: number, permit?: any, can: (p: string) => boolean, mine: boolean,
@@ -97,7 +98,7 @@ export function PermitForm({ brnch, permit, can, mine, onSave, command }) {
     queryFn: () => api(`/customers/${brnch}/${customer.customerCode}/balance`),
     enabled: !!customer && can('customer.view_balance'),
   });
-  const lines = areas.filter((a) => okQty(a.qtyTon) && a.rate);
+  const lines = areas.filter((a) => okQty(a.qtyTon) && okRate(a.rate));
   const value = permitValue(lines);
   const totalQty = lines.reduce((s, a) => s.plus(dec(a.qtyTon)), dec(0));
   const available = bal.data?.available;
@@ -127,7 +128,7 @@ export function PermitForm({ brnch, permit, can, mine, onSave, command }) {
       areaDoc: a.areaDoc,
       qtyTon: a.qtyTon,
       rate:
-        a.sheetRate !== null && a.sheetRate !== undefined && dec(a.rate || 0).eq(dec(a.sheetRate))
+        a.sheetRate !== null && a.sheetRate !== undefined && decOr(a.rate).eq(decOr(a.sheetRate))
           ? null
           : a.rate || null,
     })),
@@ -264,7 +265,7 @@ export function PermitForm({ brnch, permit, can, mine, onSave, command }) {
                   a.sheetRate !== null &&
                   a.sheetRate !== undefined &&
                   a.rate &&
-                  !dec(a.rate).eq(dec(a.sheetRate));
+                  !decOr(a.rate).eq(decOr(a.sheetRate));
                 return (
                   <tr key={a.areaDoc} className="border-t">
                     <td className="px-3 py-1.5">
@@ -310,7 +311,9 @@ export function PermitForm({ brnch, permit, can, mine, onSave, command }) {
                       )}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">
-                      {okQty(a.qtyTon) && a.rate ? fmtPKR(areaAmount(a.qtyTon, a.rate)) : '—'}
+                      {okQty(a.qtyTon) && okRate(a.rate)
+                        ? fmtPKR(areaAmount(a.qtyTon, a.rate))
+                        : '—'}
                     </td>
                     {!draft && (
                       <td className="px-3 py-1.5 text-right tabular-nums">
@@ -319,11 +322,7 @@ export function PermitForm({ brnch, permit, can, mine, onSave, command }) {
                     )}
                     {!draft && (
                       <td className="px-3 py-1.5 text-right tabular-nums">
-                        {fmtQty(
-                          dec(a.qtyTon)
-                            .minus(dec(a.dispatchedTon ?? 0))
-                            .toFixed(3),
-                        )}
+                        {fmtQty(decOr(a.qtyTon).minus(decOr(a.dispatchedTon)).toFixed(3))}
                       </td>
                     )}
                     {editable && (

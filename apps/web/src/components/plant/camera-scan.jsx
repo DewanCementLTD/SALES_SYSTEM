@@ -21,7 +21,10 @@ function cameraProblem(err) {
   if (!navigator.mediaDevices?.getUserMedia) return 'This browser has no camera access.';
   if (err?.name === 'NotAllowedError')
     return 'Camera access was refused. Allow the camera for this site in the browser settings.';
-  if (err?.name === 'NotFoundError') return 'No camera found on this device.';
+  if (err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError')
+    return 'No camera found on this device.';
+  if (err?.name === 'NotReadableError' || err?.name === 'AbortError')
+    return 'The camera is busy or blocked: close other programs using it (Teams, Zoom, the Camera app) and check Windows Settings › Privacy › Camera, then try again.';
   return err?.message ?? 'The camera could not be started.';
 }
 
@@ -73,30 +76,41 @@ function CameraView({ onResult }) {
   useEffect(() => {
     let controls = null;
     let stopped = false;
-    (async () => {
+    const onScan = (result) => {
+      if (!result || stopped) return;
+      stopped = true;
+      controls?.stop();
+      done.current(result.getText());
+    };
+    const start = async () => {
       try {
         if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)
           throw new Error('no camera'); // cameraProblem() names the reason
         const { BrowserQRCodeReader } = await import('@zxing/browser'); // loaded only when used
         const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 150 });
-        controls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: 'environment' } } }, // back camera on tablets
-          video.current,
-          (result) => {
-            if (!result || stopped) return;
-            stopped = true;
-            controls?.stop();
-            done.current(result.getText());
-          },
-        );
+        try {
+          // back camera on tablets; laptops have only the front one
+          controls = await reader.decodeFromConstraints(
+            { video: { facingMode: { ideal: 'environment' } } },
+            video.current,
+            onScan,
+          );
+        } catch (err) {
+          if (stopped || err?.name === 'NotAllowedError') throw err;
+          controls = await reader.decodeFromConstraints({ video: true }, video.current, onScan);
+        }
         if (stopped) controls.stop();
         else setState({ starting: false, problem: null });
       } catch (err) {
         if (!stopped) setState({ starting: false, problem: cameraProblem(err) });
       }
-    })();
+    };
+    // started a moment later: React dev mode mounts twice, and asking for the camera twice at
+    // once fails on Windows ("camera busy")
+    const timer = setTimeout(start, 150);
     return () => {
       stopped = true;
+      clearTimeout(timer);
       controls?.stop();
     };
   }, []);

@@ -45,3 +45,14 @@ describe('money', () => {
     expect(formatAmount('0')).toBe('0.00');
   });
 });
+
+describe('decOr (screen previews only)', () => {
+  it('reads what users type and never throws', async () => {
+    const { decOr } = await import('./money.js');
+    expect(decOr('24,300').toFixed(2)).toBe('24300.00');
+    expect(decOr('12.').toFixed(2)).toBe('12.00');
+    expect(decOr('abc').toFixed(2)).toBe('0.00');
+    expect(decOr('', 5).toFixed(0)).toBe('0');
+    expect(decOr(undefined, 5).toFixed(0)).toBe('5');
+  });
+});
