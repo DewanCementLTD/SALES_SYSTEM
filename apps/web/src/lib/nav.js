@@ -210,6 +210,13 @@ export const NAV = [
         built: true,
       },
       { label: 'Targets', href: '/accounts/targets', perm: ['target.view'], phase: 'P4' },
+      {
+        label: 'Tax withheld',
+        href: '/accounts/tax-withheld',
+        perm: ['note.view'],
+        phase: 'P4',
+        built: true,
+      },
     ],
   },
   {

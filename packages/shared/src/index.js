@@ -29,3 +29,4 @@ export * from './fbr.js';
 export * from './sync.js';
 export * from './note.js';
 export * from './incentive.js';
+export * from './taxwh.js';

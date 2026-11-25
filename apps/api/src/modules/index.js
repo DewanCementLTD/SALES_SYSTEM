@@ -24,6 +24,7 @@ import roleRoutes from './roles/routes.js';
 import settingsRoutes from './settings/routes.js';
 import srfRoutes from './srf/routes.js';
 import taxRoutes from './tax/routes.js';
+import taxWithheldRoutes from './taxwh/routes.js';
 import textRoutes from './texts/routes.js';
 import userRoutes from './users/routes.js';
 
@@ -56,4 +57,5 @@ export async function registerModules(app) {
   await app.register(invoiceRoutes, { prefix: '/api/v1' });
   await app.register(noteRoutes, { prefix: '/api/v1' });
   await app.register(incentiveRoutes, { prefix: '/api/v1' });
+  await app.register(taxWithheldRoutes, { prefix: '/api/v1' });
 }

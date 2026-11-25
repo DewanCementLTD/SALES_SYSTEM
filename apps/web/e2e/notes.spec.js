@@ -99,3 +99,32 @@ test('P4-03: incentive scheme → preview (no invoices in the sandbox period)', 
   await expect(page.getByRole('button', { name: 'Commit' })).toBeDisabled();
   await page.screenshot({ path: `${SHOTS}/44-incentive-preview.png` });
 });
+
+test('P4-05: record tax withheld, add a certificate, see the outstanding per customer', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto('/accounts/tax-withheld');
+  await page.getByRole('button', { name: 'Record tax withheld' }).click();
+  const dlg = page.getByRole('dialog');
+  await dlg.getByRole('combobox', { name: 'Customer', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Search customers' }).fill('102-04');
+  await page
+    .getByRole('option', { name: /102-04/ })
+    .first()
+    .click();
+  await dlg.getByLabel('Amount (PKR)').fill('12500');
+  await dlg.getByLabel('Doc', { exact: true }).fill('BRV');
+  await dlg.getByLabel('Doc #').fill('227002357');
+  await dlg.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('cell', { name: 'BRV 227002357' }).first()).toBeVisible();
+  await page
+    .getByRole('button', { name: /^Certificate for entry/ })
+    .first()
+    .click();
+  await page.getByLabel('Certificate amount (PKR)').fill('10000');
+  await page.getByRole('dialog').getByRole('button', { name: 'Record' }).click();
+  await page.getByRole('tab', { name: 'Per customer' }).click();
+  await expect(page.getByRole('row', { name: /102-04/ }).first()).toContainText('2,500.00');
+  await page.screenshot({ path: `${SHOTS}/45-tax-withheld.png` });
+});
