@@ -133,6 +133,13 @@ export default function NotePage() {
               </Row>
               <Row label="Date">{fmtDate(n.date)}</Row>
               {n.invoiceNo && <Row label="Invoice">INV {n.invoiceNo}</Row>}
+              {n.transferCustomer && (
+                <Row label="Balance transfer">
+                  {n.kind === 'C'
+                    ? `${n.transferCustomer} → ${n.customerCode}`
+                    : `${n.customerCode} → ${n.transferCustomer} (reversed)`}
+                </Row>
+              )}
               <Row label="Lines">{fmtPKR(n.gross)}</Row>
               <Row label="WHT">− {fmtPKR(n.wht)}</Row>
               <div className="flex justify-between border-t pt-1.5 font-semibold">

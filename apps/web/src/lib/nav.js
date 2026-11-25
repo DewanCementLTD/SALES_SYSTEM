@@ -200,6 +200,7 @@ export const NAV = [
         href: '/accounts/transfers',
         perm: ['note.transfer'],
         phase: 'P4',
+        built: true,
       },
       {
         label: 'Incentive runs',

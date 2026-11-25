@@ -232,4 +232,72 @@ describe('credit / debit notes (P4-01)', () => {
     const mine = (await fin.get(`/api/v1/notes?kind=C&status=DRAFT&customer=${CUST}`)).json();
     expect(mine.items.map((x) => x.srlNo)).toContain(n.srlNo);
   });
+
+  it('BR-NOTE-04: balance transfer A → B is one document, Dr A / Cr B in both ledgers; reversal swaps', async () => {
+    const fin = await as({ 1: ['FINANCE'] });
+    const fm = await as({ 1: ['FINANCE_MANAGER'] });
+    const A = '102-04';
+    const trf = {
+      fromCustomer: A,
+      toCustomer: CUST,
+      amount: '50000',
+      date: '2026-11-25',
+      particular: 'Advance of sister concern',
+    };
+    expect((await fin.post('/api/v1/notes/transfer', { ...trf, toCustomer: A })).statusCode).toBe(
+      400,
+    );
+    const mkt = await as({ 1: ['MARKETING'] }); // note.view only
+    expect((await mkt.post('/api/v1/notes/transfer', trf)).statusCode).toBe(403);
+
+    let r = await fin.post('/api/v1/notes/transfer', trf);
+    expect(r.statusCode, r.body).toBe(201);
+    const n = r.json();
+    expect(n).toMatchObject({
+      kind: 'C',
+      customerCode: CUST,
+      transferCustomer: A,
+      noteType: '001',
+      net: '50000.00',
+      status: 'DRAFT',
+    });
+    r = await fin.post(`/api/v1/notes/1/C/${n.srlNo}/submit`, {}, ifm(n.rowVer));
+    expect(r.statusCode, r.body).toBe(200);
+    r = await fm.post(`/api/v1/approvals/${r.json().requestId}/approve`, {});
+    expect(r.statusCode, r.body).toBe(200);
+
+    const led = await rows(n.srlNo);
+    expect(led.map((x) => [x.ledgerType, x.customerCode, x.entryKind, x.debit, x.credit])).toEqual([
+      ['DO', A, 'TRANSFER_OUT', '50000.00', '0.00'],
+      ['DO', CUST, 'TRANSFER_IN', '0.00', '50000.00'],
+      ['DC', A, 'TRANSFER_OUT', '50000.00', '0.00'],
+      ['DC', CUST, 'TRANSFER_IN', '0.00', '50000.00'],
+    ]);
+    expect(led[0].narration).toMatch(
+      new RegExp(`^Balance transfer # CN ${n.srlNo} · ${A} → ${CUST}`),
+    );
+    const list = (await fin.get('/api/v1/notes?transfer=Y&status=POSTED')).json();
+    expect(list.items.map((x) => x.srlNo)).toContain(n.srlNo);
+
+    const posted = (await fin.get(`/api/v1/notes/1/C/${n.srlNo}`)).json();
+    r = await fin.post(
+      `/api/v1/notes/1/C/${n.srlNo}/reverse`,
+      { reason: 'Customer asked to keep the advance' },
+      ifm(posted.rowVer),
+    );
+    expect(r.statusCode, r.body).toBe(200);
+    const rev = r.json().reversal;
+    expect(rev).toMatchObject({ kind: 'D', transferCustomer: A, customerCode: CUST });
+    const back = await rows(rev.srlNo, 'DN');
+    expect(
+      back.map((x) => [x.ledgerType, x.customerCode, x.debit, x.credit, x.reversalOf]),
+    ).toEqual(
+      [
+        ['DO', CUST, '50000.00', '0.00', led[1].ledgerId],
+        ['DO', A, '0.00', '50000.00', led[0].ledgerId],
+        ['DC', CUST, '50000.00', '0.00', led[3].ledgerId],
+        ['DC', A, '0.00', '50000.00', led[2].ledgerId],
+      ].sort((a, b) => a[4] - b[4]),
+    );
+  });
 });

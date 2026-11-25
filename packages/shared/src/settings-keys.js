@@ -263,6 +263,15 @@ const DEFS = [
     perBranch: true,
   },
   {
+    key: 'NOTE_TYPE_TRANSFER',
+    def: '001',
+    type: 'STRING',
+    rule: 'BR-NOTE-04',
+    descr:
+      'Note type of a balance transfer (credit note to the receiving customer; 001 = ADJUSTMENTS in both branches)',
+    perBranch: true,
+  },
+  {
     key: 'WORKER_HOST',
     def: '',
     type: 'STRING',

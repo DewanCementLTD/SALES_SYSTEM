@@ -42,6 +42,21 @@ const noteBody = {
 /** POST /notes */
 export const zNoteCreate = z.object({ kind: z.enum(['C', 'D']), ...noteBody });
 
+/** POST /notes/transfer (BR-NOTE-04): move an amount from customer A to customer B. */
+export const zTransferCreate = z
+  .object({
+    fromCustomer: z.string().trim().min(1, 'Choose the customer to debit').max(11),
+    toCustomer: z.string().trim().min(1, 'Choose the customer to credit').max(11),
+    amount: zLineAmount,
+    date: zIsoDate,
+    particular: z.string().trim().min(3, 'Say why the balance moves').max(60),
+    remarks: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine((v) => v.fromCustomer !== v.toCustomer, {
+    path: ['toCustomer'],
+    message: 'Choose two different customers',
+  });
+
 /**
  * BR-NOTE-02: WHT per line = amount × WHT % (rounded to the paisa, half up); net = Σ lines − WHT.
  * @param {{ amount: string, whtPct?: string|null }[]} lines

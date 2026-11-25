@@ -1,6 +1,14 @@
 // /api/v1/notes (API_SPEC §14, TASKS P4-01): credit / debit notes. Approve / reject go through
 // the approvals inbox (`/approvals/{reqId}/approve|reject`, rule NOTE_POST).
-import { P, zBrnch, zIsoDate, zNoteCreate, zPageQuery, zReason } from '@dcl/shared';
+import {
+  P,
+  zBrnch,
+  zIsoDate,
+  zNoteCreate,
+  zPageQuery,
+  zReason,
+  zTransferCreate,
+} from '@dcl/shared';
 import { z } from 'zod';
 import { resolveListBranches } from '../../lib/branch-scope.js';
 import { etag, ifMatch } from '../../lib/http.js';
@@ -89,6 +97,7 @@ export default async function noteRoutes(app) {
         querystring: zPageQuery.extend({
           brnch: z.union([z.literal('all'), z.coerce.number().int()]).optional(),
           kind: z.enum(['C', 'D']).optional(),
+          transfer: z.enum(['Y', 'N']).optional(),
           type: z
             .string()
             .regex(/^\d{3}$/)
@@ -164,6 +173,28 @@ export default async function noteRoutes(app) {
       const n = await app.db.withTx(
         (tx) => svc.createNote(tx, actor(request), request.session.brnch, request.body),
         request.txOpts('notes.create'),
+      );
+      reply.header('etag', etag(n.rowVer));
+      return reply.status(201).send(n);
+    },
+  );
+
+  app.post(
+    '/notes/transfer',
+    {
+      config: { permission: P.note.transfer },
+      schema: {
+        tags,
+        summary:
+          'Balance transfer A → B (BR-NOTE-04): one DRAFT credit note to B with A as transfer customer; posted: Dr A, Cr B in the DO and DC ledgers',
+        body: zTransferCreate,
+        response: { 201: zNote },
+      },
+    },
+    async (request, reply) => {
+      const n = await app.db.withTx(
+        (tx) => svc.createTransfer(tx, actor(request), request.session.brnch, request.body),
+        request.txOpts('notes.transfer'),
       );
       reply.header('etag', etag(n.rowVer));
       return reply.status(201).send(n);

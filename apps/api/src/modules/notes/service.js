@@ -88,7 +88,7 @@ function mapNote(r) {
   };
 }
 
-/** @param {{ branches: number[], kind?: string, type?: string, customer?: string, from?: string, to?: string, status?: string, page?: number, pageSize?: number }} o */
+/** @param {{ branches: number[], transfer?: 'Y'|'N', kind?: string, type?: string, customer?: string, from?: string, to?: string, status?: string, page?: number, pageSize?: number }} o */
 export async function listNotes(tx, o) {
   const bf = branchFilter('n.BRNCH', o.branches);
   const binds = { ...bf.binds };
@@ -99,6 +99,8 @@ export async function listNotes(tx, o) {
     binds[k] = v;
   };
   add('n.DB_CR_CD = :kind', 'kind', o.kind);
+  if (o.transfer === 'Y') where.push('n.TRANSFER_CUSTOMER IS NOT NULL');
+  if (o.transfer === 'N') where.push('n.TRANSFER_CUSTOMER IS NULL');
   add('n.NOTE_TYPE = :nt', 'nt', o.type);
   add('n.CUSTOMER_CODE = :cu', 'cu', o.customer);
   add(`${STATUS} = :st`, 'st', o.status);
@@ -283,6 +285,39 @@ export async function createNote(tx, actor, brnch, body, extra = {}) {
   return getNote(tx, brnch, body.kind, srlNo);
 }
 
+/**
+ * POST /notes/transfer (BR-NOTE-04): one document moving `amount` from customer A to customer B —
+ * a DRAFT credit note to B with A in TRANSFER_CUSTOMER, type NOTE_TYPE_TRANSFER (OPEN: legacy
+ * transfers used a pair of C/D notes). It follows the note life (submit → NOTE_POST → posted).
+ */
+export async function createTransfer(tx, actor, brnch, body) {
+  if (body.fromCustomer === body.toCustomer)
+    throw Errors.rule('BR-NOTE-04', 'A transfer needs two different customers');
+  const from = await tx.one(
+    'SELECT CLOSED, DOC_STATUS FROM CUSTOMER_INFO WHERE BRNCH = :b AND CUSTOMER_CODE = :c',
+    { b: brnch, c: body.fromCustomer },
+  );
+  if (!from) throw Errors.notFound(`Customer ${body.fromCustomer}`);
+  if (from.CLOSED === 'Y' || from.DOC_STATUS === 'CLOSED')
+    throw Errors.rule('BR-CUS-02', `Customer ${body.fromCustomer} is closed`);
+  const noteType = await new SettingsReader(tx).get(brnch, 'NOTE_TYPE_TRANSFER');
+  return createNote(
+    tx,
+    actor,
+    brnch,
+    {
+      kind: 'C',
+      noteType,
+      customerCode: body.toCustomer,
+      date: body.date,
+      remarks: body.remarks ?? null,
+      invoiceId: null,
+      lines: [{ particular: body.particular, amount: body.amount, whtPct: null }],
+    },
+    { transferCustomer: body.fromCustomer },
+  );
+}
+
 /** Ledger rows of a posted note: DO and DC ledger, Cr for a credit note, Dr for a debit note. */
 function ledgerRows(note, entryKind = 'NOTE') {
   const side = note.kind === 'C' ? { credit: note.net } : { debit: note.net };
@@ -298,14 +333,47 @@ function ledgerRows(note, entryKind = 'NOTE') {
       .filter(Boolean)
       .join(' · '),
   });
-  return ['DO', 'DC'].map((ledgerType) => ({
+  const base = {
     brnch: note.brnch,
-    customerCode: note.customerCode,
-    ledgerType,
     entryDate: note.date,
     docType: noteDocType(note.kind),
     docYear: null,
     docNo: note.srlNo,
+  };
+  if (note.transferCustomer) {
+    // BR-NOTE-04: balance transfer A → B. The note is a credit note to B (customerCode) with A in
+    // TRANSFER_CUSTOMER: Dr A, Cr B in both ledgers; its reversal (debit note) swaps the sides.
+    const from = note.kind === 'C' ? note.transferCustomer : note.customerCode;
+    const to = note.kind === 'C' ? note.customerCode : note.transferCustomer;
+    const trf = narration.transfer({
+      transferNo: `${noteDocType(note.kind)} ${note.srlNo}`,
+      from: note.transferCustomer,
+      to: note.customerCode,
+    });
+    const text2 = note.reversalOf ? `${trf} · reverses # ${note.reversalOf}` : trf;
+    return ['DO', 'DC'].flatMap((ledgerType) => [
+      {
+        ...base,
+        ledgerType,
+        customerCode: from,
+        entryKind: 'TRANSFER_OUT',
+        narration: text2,
+        debit: note.net,
+      },
+      {
+        ...base,
+        ledgerType,
+        customerCode: to,
+        entryKind: 'TRANSFER_IN',
+        narration: text2,
+        credit: note.net,
+      },
+    ]);
+  }
+  return ['DO', 'DC'].map((ledgerType) => ({
+    ...base,
+    customerCode: note.customerCode,
+    ledgerType,
     entryKind,
     narration: text,
     ...side,
@@ -370,6 +438,7 @@ export async function submitNote(tx, actor, brnch, kind, srlNo, rowVer, opts) {
         srlNo,
         noteType: note.noteType,
         customerCode: note.customerCode,
+        transferFrom: note.transferCustomer,
         net: note.net,
         lines: note.lines,
       },
@@ -475,9 +544,9 @@ export async function reverseNote(tx, actor, brnch, kind, srlNo, rowVer, reason)
   await tx.exec(
     `INSERT INTO CREDIT_NOTE (SRL_NO, DB_CR_DATE, CUSTOMER_CODE, DB_CR_CD, NOTE_TYPE, AMOUNT, ENTER_BY,
        ENTER_DATE, REMARKS, POST, POST_BY, POST_DATE, WITHHOLDING_TAX, NET_AMOUNT, COMPC, BRNCH,
-       DOC_STATUS, ROW_VER, CREATED_BY, CREATED_ON, INVOICE_ID, REVERSAL_OF_SRL)
+       DOC_STATUS, ROW_VER, CREATED_BY, CREATED_ON, INVOICE_ID, REVERSAL_OF_SRL, TRANSFER_CUSTOMER)
      VALUES (:n, :d, :c, :k, :t, :gross, :u10, :now, :rem, 'Y', :u10, :now, :wht, :net, 1, :b,
-       'POSTED', 1, :u, :now, :inv, :rev)`,
+       'POSTED', 1, :u, :now, :inv, :rev, :trf)`,
     {
       n: revNo,
       d: toDate(today),
@@ -494,6 +563,7 @@ export async function reverseNote(tx, actor, brnch, kind, srlNo, rowVer, reason)
       u: actor.usrid,
       inv: note.invoiceId,
       rev: Number(srlNo),
+      trf: note.transferCustomer,
     },
   );
   await writeLines(tx, brnch, other, revNo, note.noteType, lines);
@@ -511,7 +581,9 @@ export async function reverseNote(tx, actor, brnch, kind, srlNo, rowVer, reason)
       tx,
       actor,
       open.map((r) => ({
-        ...ledgerRows(rev).find((x) => x.ledgerType === r.ledgerType),
+        ...ledgerRows(rev).find(
+          (x) => x.ledgerType === r.ledgerType && x.customerCode === r.customerCode,
+        ),
         reversalOf: r.ledgerId,
       })),
     );

@@ -49,3 +49,28 @@ test('P4-01: credit note with WHT → draft → submitted for approval', async (
   await page.goto('/accounts/notes?status=PENDING_APPROVAL');
   await expect(page.getByRole('link', { name: /^CN \d+/ }).first()).toBeVisible();
 });
+
+test('P4-02: balance transfer A → B saved as a draft credit note to B', async ({ page }) => {
+  await login(page);
+  await page.goto('/accounts/transfers');
+  await expect(page.getByRole('heading', { level: 1, name: 'Balance transfers' })).toBeVisible();
+  await page.getByRole('button', { name: 'New transfer' }).click();
+  const dlg = page.getByRole('dialog');
+  for (const [name, code] of [
+    ['From (debited)', '102-04'],
+    ['To (credited)', '912-351'],
+  ]) {
+    await dlg.getByRole('combobox', { name, exact: true }).click();
+    await page.getByRole('combobox', { name: 'Search customers' }).fill(code);
+    await page
+      .getByRole('option', { name: new RegExp(code) })
+      .first()
+      .click();
+  }
+  await dlg.getByLabel('Amount (PKR)').fill('50000');
+  await dlg.getByLabel('Particular').fill('Advance of sister concern');
+  await page.screenshot({ path: `${SHOTS}/42-transfer-new.png` });
+  await dlg.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: /^Credit note \d+/ })).toBeVisible();
+  await expect(page.getByText('102-04 → 912-351')).toBeVisible();
+});

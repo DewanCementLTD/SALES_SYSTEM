@@ -154,6 +154,7 @@ export function NoteForm() {
               <Err msg={errs.date?.message} />
             </div>
             <div className="space-y-1.5 md:col-span-2">
+              <Label htmlFor="nt-cust">Customer</Label>
               <CustomerPicker
                 id="nt-cust"
                 brnch={s.branch}
