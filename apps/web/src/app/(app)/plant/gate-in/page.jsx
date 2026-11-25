@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { CameraScan } from '@/components/plant/camera-scan';
 import { OfflineBanner } from '@/components/plant/offline-banner';
 import { api } from '@/lib/api';
 import { cachedDocs, isOffline, queueEvent } from '@/lib/offline';
@@ -68,19 +69,24 @@ export default function GateInPage() {
     setDocs((x) => [...x, { ...card, plannedBags: '', plannedTon: '' }]);
     toast.success(`DO ${card.doNo} added: ${fmtQty(card.remainingTon)} t left`);
   };
-  const scan = async (e) => {
+  const scan = (e) => {
     e.preventDefault();
-    if (!scanText.trim()) return;
+    checkQr(scanText);
+  };
+  /** USB scanner / typed text or the camera (P3-10): the same server check, offline fallback */
+  const checkQr = async (raw) => {
+    const text = raw.trim();
+    if (!text) return;
     setBusy('scan');
     setError(null);
     try {
-      addCard(await api('/plant/scan', { method: 'POST', body: { qr: scanText.trim() } }));
+      addCard(await api('/plant/scan', { method: 'POST', body: { qr: text } }));
       setScanText('');
     } catch (err) {
       if (isOffline(err)) {
         // BR-OFF-02: check the signed QR against the cached open documents
         const cache = await cachedDocs(s.branch);
-        const r = offlineQrCheck(scanText.trim(), cache?.entries ?? [], s.branch);
+        const r = offlineQrCheck(text, cache?.entries ?? [], s.branch);
         if (r.ok) {
           const [doType, doNo] = r.entry.docNo.split('-');
           addCard({ ...r.entry, doType, doNo });
@@ -187,6 +193,11 @@ export default function GateInPage() {
                 )}{' '}
                 Check
               </Button>
+              <CameraScan
+                onResult={checkQr}
+                disabled={busy === 'scan'}
+                label="Scan the DO QR with the camera"
+              />
               {s.can('gate.manual_lookup') && (
                 <div className="flex items-end gap-2">
                   <div className="space-y-1.5">

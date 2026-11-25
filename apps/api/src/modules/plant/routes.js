@@ -24,6 +24,9 @@ const zReading = z.object({
   signature: z.string().min(20).max(100),
 });
 
+/** plant commands that change the board (gate-in, weighing, exit, abort, DC cancel, sync) */
+const BOARD_COMMAND = /^\/api\/v1\/plant\/(gate-passes|dc\/|sync)/;
+
 const zArea = z.object({
   lnkno: z.number(),
   areaDoc: z.string(),
@@ -149,6 +152,17 @@ const zReceived = z.object({ readingId: z.string(), receivedOn: z.date(), duplic
 
 /** @param {import('fastify').FastifyInstance} app */
 export default async function plantRoutes(app) {
+  // Live plant board (P3-10, ADR-9): a successful plant command tells the boards of its branch to
+  // refresh. onResponse runs after the command's transaction committed; scans, lookups, prints and
+  // weighbridge readings change nothing on the board.
+  app.addHook('onResponse', async (request, reply) => {
+    if (request.method === 'GET' || reply.statusCode >= 400) return;
+    const url = request.routeOptions?.url ?? '';
+    if (!BOARD_COMMAND.test(url) || url.endsWith('/print')) return;
+    const brnch = request.session?.brnch;
+    if (brnch) app.sse.publish('plant.board', { brnch }, { route: url });
+  });
+
   const tags = ['plant'];
 
   app.post(

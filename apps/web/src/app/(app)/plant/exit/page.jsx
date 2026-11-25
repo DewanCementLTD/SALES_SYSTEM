@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { ReasonDialog } from '@/components/common/dialogs';
 import { PageHeader, ProblemAlert, Section, StatusBadge } from '@/components/common/page';
+import { CameraScan } from '@/components/plant/camera-scan';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,12 +41,16 @@ export default function ExitPage() {
       setBusy(null);
     }
   };
-  const scan = (e) => {
-    e.preventDefault();
-    if (qr.trim())
-      load(() => api('/plant/exit-scan', { method: 'POST', body: { qr: qr.trim() } })).then(() =>
+  const checkQr = (raw) => {
+    const text = raw.trim();
+    if (text)
+      load(() => api('/plant/exit-scan', { method: 'POST', body: { qr: text } })).then(() =>
         setQr(''),
       );
+  };
+  const scan = (e) => {
+    e.preventDefault();
+    checkQr(qr);
   };
   const post = (path, body = {}) =>
     api(`/plant/gate-passes/${view.gatePass.gpId}/${path}`, {
@@ -86,6 +91,11 @@ export default function ExitPage() {
             <Button type="submit" aria-label="Check the gate pass" disabled={busy === 'load'}>
               <QrCode className="size-4" />
             </Button>
+            <CameraScan
+              onResult={checkQr}
+              disabled={busy === 'load'}
+              label="Scan the gate-pass QR with the camera"
+            />
           </form>
           <ul className="space-y-1">
             {ready.map((x) => (

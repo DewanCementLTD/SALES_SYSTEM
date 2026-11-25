@@ -119,3 +119,13 @@
   text-align: right;
   white-space: nowrap;
 }
+
+/* Touch screens (plant tablets, P3-10): controls at least 44 px high, the WCAG target size */
+@media (pointer: coarse) {
+  [data-slot='button'],
+  [data-slot='input'],
+  [data-slot='select-trigger'],
+  [data-slot='tabs-trigger'] {
+    min-height: 44px;
+  }
+}

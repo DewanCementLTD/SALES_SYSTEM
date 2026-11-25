@@ -50,7 +50,7 @@ test('P3-08: exit screen refuses a QR that is not a gate pass', async ({ page })
   await login(page);
   await page.goto('/plant/exit');
   await expect(page.getByRole('heading', { level: 1, name: 'Exit' })).toBeVisible();
-  await page.getByLabel('Gate-pass QR').fill('NOT-A-GATE-PASS');
+  await page.getByRole('textbox', { name: 'Gate-pass QR' }).fill('NOT-A-GATE-PASS');
   await page.getByRole('button', { name: 'Check the gate pass' }).click();
   await expect(
     page.getByRole('alert').filter({ hasText: /gate-pass QR|not allowed|need/i }),
@@ -80,5 +80,34 @@ test('P3-10: offline gate-in checks QRs against the cached documents (BR-OFF-02)
   await page.getByLabel('Scan the DO QR (or paste it)').fill('DCL|DO|1|OS-1|1|abc');
   await page.getByRole('button', { name: 'Check' }).click();
   await expect(page.getByRole('alert').filter({ hasText: /offline check/ })).toBeVisible();
+  await context.setOffline(false);
+});
+
+test('P3-10: camera scanning opens from the gate-in screen', async ({ page }) => {
+  await login(page);
+  await page.goto('/plant/gate-in');
+  await page.getByRole('button', { name: 'Scan the DO QR with the camera' }).click();
+  await expect(page.getByRole('dialog', { name: 'Scan the QR code' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('P3-10: the gate-in screen opens without a connection (service worker, last session)', async ({
+  page,
+  context,
+}) => {
+  await login(page);
+  await page.goto('/plant/gate-in');
+  const heading = page.getByRole('heading', { level: 1, name: 'Gate-in' });
+  await expect(heading).toBeVisible();
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await page.reload(); // now controlled by the service worker, which keeps a copy of the page
+  await expect(heading).toBeVisible();
+
+  await context.setOffline(true);
+  await page.reload();
+  await expect(heading).toBeVisible();
+  await expect(page.getByText('Offline: work is saved on this tablet.')).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/38-gate-in-offline.png` });
   await context.setOffline(false);
 });

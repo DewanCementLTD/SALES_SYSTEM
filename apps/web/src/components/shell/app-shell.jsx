@@ -9,16 +9,23 @@ import { Topbar } from './topbar';
 import { SessionProvider, useSessionState } from '@/lib/session';
 import { qk } from '@/lib/query-keys';
 
-/** Live updates (ADR-9): SSE invalidates the bell and the approvals inbox. Polling stays as fallback. */
+/**
+ * Live updates (ADR-9): one SSE connection refreshes the bell, the approvals inbox and the plant
+ * screens (board, weighing, exit: P3-10). Polling stays as fallback.
+ */
 function useLiveEvents(enabled) {
   const qc = useQueryClient();
   useEffect(() => {
     if (!enabled || typeof EventSource === 'undefined') return undefined;
-    const es = new EventSource('/api/v1/events?channels=notifications,approvals');
+    const es = new EventSource('/api/v1/events?channels=notifications,approvals,plant.board');
     es.addEventListener('notifications', () =>
       qc.invalidateQueries({ queryKey: qk.notifications }),
     );
-    es.addEventListener('approvals', () => qc.invalidateQueries({ queryKey: ['approvals'] }));
+    es.addEventListener('approvals', () => {
+      qc.invalidateQueries({ queryKey: ['approvals'] });
+      qc.invalidateQueries({ queryKey: ['plant'] }); // weight / exit overrides decided
+    });
+    es.addEventListener('plant.board', () => qc.invalidateQueries({ queryKey: ['plant'] }));
     return () => es.close();
   }, [enabled, qc]);
 }

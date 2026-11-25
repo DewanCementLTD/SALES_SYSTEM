@@ -1,8 +1,8 @@
 'use client';
 
 // Plant › Plant queue (PRD 4.9, TASKS P3-04): trucks inside the plant with their status and the
-// minutes since gate-in (amber after 60, red after 120). Refreshes every 15 seconds; the live
-// SSE board and the PWA come with P3-10.
+// minutes since gate-in (amber after 60, red after 120). Live: every gate-in, weighing, exit or
+// cancel of the branch refreshes it over SSE (P3-10); the 15-second poll stays as fallback.
 import { useQuery } from '@tanstack/react-query';
 import { ListOrdered } from 'lucide-react';
 import { DataTable } from '@/components/common/data-table';

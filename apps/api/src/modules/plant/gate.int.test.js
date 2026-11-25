@@ -1,5 +1,5 @@
 // Gate-in, DO route (TASKS P3-04; BR-GATE-02…06, BR-DC-01/02). SALES_NEW, rolled back.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Client, buildTestApp, createUser } from '../../../test/helpers/app.js';
 
 /** @type {Awaited<ReturnType<typeof buildTestApp>>} */
@@ -75,6 +75,7 @@ describe('gate-in, DO route (P3-04)', () => {
   it('BR-GATE-06: gate pass and DC with planned quantities; vehicle, balance and combine rules', async () => {
     const { transp, city } = await seed();
     const gate = await as({ 1: ['GATE_OPERATOR'] });
+    const published = vi.spyOn(t.app.sse, 'publish');
     const docs = [
       { doType: 'OS', doNo: '22799000001', plannedBags: 400 },
       { doType: 'OS', doNo: '22799000002', plannedBags: 300 },
@@ -96,6 +97,11 @@ describe('gate-in, DO route (P3-04)', () => {
       driver: { cnic: '42101-*******-1' },
     });
     expect(gp.dcNo).toMatch(/^\d+$/);
+    // P3-10: the plant boards of Karachi refresh after the gate-in committed
+    await vi.waitFor(() =>
+      expect(published).toHaveBeenCalledWith('plant.board', { brnch: 1 }, expect.anything()),
+    );
+    published.mockClear();
     expect(gp.lines.map((l) => [l.doNo, l.plannedBags, l.plannedTon, l.status])).toEqual([
       ['22799000001', 400, '20.000', 'ISSUED'],
       ['22799000002', 300, '15.000', 'ISSUED'],
@@ -140,6 +146,8 @@ describe('gate-in, DO route (P3-04)', () => {
       idem(),
     );
     expect(r.json()).toMatchObject({ ruleId: 'BR-GATE-03' });
+
+    expect(published).not.toHaveBeenCalled(); // refused commands change nothing on the board
 
     // board and detail
     const board = (await gate.get('/api/v1/plant/board')).json();

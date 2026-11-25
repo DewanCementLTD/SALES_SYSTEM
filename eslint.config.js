@@ -19,6 +19,8 @@ export default [
       '**/test-results/**',
       'db/**',
       'storage/**',
+      'apps/web/public/sw.js',
+      'apps/web/public/swe-worker-*.js',
     ],
   },
   js.configs.recommended,

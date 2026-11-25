@@ -1,4 +1,13 @@
 // Next.js config. /api/v1 is forwarded to the API by src/app/api/v1/[...path]/route.js (runtime API_URL).
+// Serwist (P3-10) builds src/app/sw.js into public/sw.js on `next build`; off in `next dev`.
+import withSerwistInit from '@serwist/next';
+
+const withSerwist = withSerwistInit({
+  swSrc: 'src/app/sw.js',
+  swDest: 'public/sw.js',
+  disable: process.env.NODE_ENV === 'development',
+  reloadOnOnline: false, // a reload would drop a half-filled gate-in form; the banner syncs instead
+});
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -23,4 +32,4 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSerwist(nextConfig);
