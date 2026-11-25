@@ -207,6 +207,7 @@ export const NAV = [
         href: '/accounts/incentives',
         perm: ['incentive.view'],
         phase: 'P4',
+        built: true,
       },
       { label: 'Targets', href: '/accounts/targets', perm: ['target.view'], phase: 'P4' },
     ],

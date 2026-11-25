@@ -74,3 +74,28 @@ test('P4-02: balance transfer A → B saved as a draft credit note to B', async 
   await expect(page.getByRole('heading', { level: 1, name: /^Credit note \d+/ })).toBeVisible();
   await expect(page.getByText('102-04 → 912-351')).toBeVisible();
 });
+
+test('P4-03: incentive scheme → preview (no invoices in the sandbox period)', async ({ page }) => {
+  await login(page);
+  await page.goto('/accounts/incentives');
+  await expect(page.getByRole('heading', { level: 1, name: 'Incentive runs' })).toBeVisible();
+  await page.getByRole('button', { name: 'New scheme' }).click();
+  const dlg = page.getByRole('dialog');
+  await dlg.getByLabel('Memo #').fill('MKT/INC/E2E');
+  await dlg.getByLabel('Period from').fill('2020-01-01');
+  await dlg.getByLabel('Period to').fill('2020-01-31');
+  await dlg.getByLabel('First customer code').fill('100-00');
+  await dlg.getByLabel('Last customer code').fill('999-99');
+  await dlg.getByRole('combobox', { name: 'Product 1' }).click();
+  await page.getByRole('option', { name: /^OPC ·/ }).click();
+  await dlg.getByLabel('Rate / t').fill('700');
+  await page.screenshot({ path: `${SHOTS}/43-incentive-new.png` });
+  await dlg.getByRole('button', { name: 'Save scheme' }).click();
+  await expect(
+    page.getByRole('heading', { level: 1, name: /^Incentive scheme INC \d+/ }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Preview' }).click();
+  await expect(page.getByText('No invoiced quantity in this period')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Commit' })).toBeDisabled();
+  await page.screenshot({ path: `${SHOTS}/44-incentive-preview.png` });
+});

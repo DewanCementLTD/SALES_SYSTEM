@@ -8,6 +8,7 @@ import customerRoutes from './customers/routes.js';
 import deviceRoutes from './devices/routes.js';
 import doRoutes from './do/routes.js';
 import fileRoutes from './files/routes.js';
+import incentiveRoutes from './incentives/routes.js';
 import invoiceRoutes from './invoices/routes.js';
 import geoRoutes from './geo/routes.js';
 import ledgerRoutes from './ledger/routes.js';
@@ -54,4 +55,5 @@ export async function registerModules(app) {
   await app.register(plantRoutes, { prefix: '/api/v1' });
   await app.register(invoiceRoutes, { prefix: '/api/v1' });
   await app.register(noteRoutes, { prefix: '/api/v1' });
+  await app.register(incentiveRoutes, { prefix: '/api/v1' });
 }

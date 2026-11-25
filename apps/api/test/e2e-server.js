@@ -57,8 +57,8 @@ await createUser(db, {
   usrid,
   password,
   roles: {
-    1: ['SYS_ADMIN', 'FINANCE_MANAGER', 'AUDITOR', 'MARKETING'],
-    2: ['SYS_ADMIN', 'FINANCE_MANAGER', 'AUDITOR', 'MARKETING'],
+    1: ['SYS_ADMIN', 'FINANCE_MANAGER', 'FINANCE', 'AUDITOR', 'MARKETING'],
+    2: ['SYS_ADMIN', 'FINANCE_MANAGER', 'FINANCE', 'AUDITOR', 'MARKETING'],
   },
 });
 

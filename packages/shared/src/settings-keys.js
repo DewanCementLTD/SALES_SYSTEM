@@ -272,6 +272,14 @@ const DEFS = [
     perBranch: true,
   },
   {
+    key: 'NOTE_TYPE_INCENTIVE',
+    def: '008',
+    type: 'STRING',
+    rule: 'BR-INC-01',
+    descr: 'Credit note type of an incentive run (008 = INCENTIVE in both branches)',
+    perBranch: true,
+  },
+  {
     key: 'WORKER_HOST',
     def: '',
     type: 'STRING',
